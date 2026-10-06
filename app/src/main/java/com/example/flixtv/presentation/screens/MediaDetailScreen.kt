@@ -1,6 +1,6 @@
 package com.example.flixtv.presentation.screens
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import com.example.flixtv.presentation.components.FrostedOrbButton
 import com.example.flixtv.theme.PrimaryAzure
@@ -39,10 +40,14 @@ import com.example.flixtv.theme.SecondaryIceCyan
 fun MediaDetailScreen(
     mediaItem: MediaItem,
     onBackClick: () -> Unit,
-    onPlayClick: (String) -> Unit
+    onPlayClick: (streamUrl: String, title: String, embedUrl: String?) -> Unit
 ) {
     var isExpandedSynopsis by remember { mutableStateOf(false) }
     var isInWatchlist by remember { mutableStateOf(false) }
+    val isSeries = mediaItem.category == "TV Show" || mediaItem.category == "Anime"
+    val firstEp = mediaItem.episodes.firstOrNull()
+    val defaultStream = firstEp?.streamUrl ?: mediaItem.streamUrl ?: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    val defaultEmbed = firstEp?.embedUrl ?: mediaItem.embedUrl
 
     Box(
         modifier = Modifier
@@ -59,7 +64,7 @@ fun MediaDetailScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(400.dp)
+                    .height(380.dp)
             ) {
                 // Backdrop Image
                 AsyncImage(
@@ -76,8 +81,8 @@ fun MediaDetailScreen(
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
-                                    Color(0xFF08080C).copy(alpha = 0.4f),
-                                    Color(0xFF08080C).copy(alpha = 0.7f),
+                                    Color(0xFF08080C).copy(alpha = 0.35f),
+                                    Color(0xFF08080C).copy(alpha = 0.70f),
                                     Color(0xFF08080C)
                                 )
                             )
@@ -120,7 +125,7 @@ fun MediaDetailScreen(
                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                         ) {
                             Text(
-                                text = if (mediaItem.category == "Anime") "ANIME PREMIERE" else "ORIGINAL FILM",
+                                text = if (mediaItem.category == "Anime") "ANIME SERIES" else if (isSeries) "TV SERIES" else "ORIGINAL FILM",
                                 color = SecondaryIceCyan,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
@@ -192,8 +197,8 @@ fun MediaDetailScreen(
                             text = mediaItem.title,
                             color = Color.White,
                             style = MaterialTheme.typography.displayLarge.copy(
-                                fontSize = 30.sp,
-                                lineHeight = 36.sp,
+                                fontSize = 28.sp,
+                                lineHeight = 34.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         )
@@ -217,7 +222,7 @@ fun MediaDetailScreen(
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "TV-MA",
+                                    text = if (isSeries) "TV-MA" else "PG-13",
                                     color = Color.White,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
@@ -292,7 +297,11 @@ fun MediaDetailScreen(
                                 interactionSource = playInteractionSource,
                                 indication = null
                             ) {
-                                mediaItem.streamUrl?.let { onPlayClick(it) }
+                                onPlayClick(
+                                    defaultStream,
+                                    if (isSeries) "${mediaItem.title} - S1:E1" else mediaItem.title,
+                                    defaultEmbed
+                                )
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -307,7 +316,7 @@ fun MediaDetailScreen(
                                 modifier = Modifier.size(26.dp)
                             )
                             Text(
-                                text = if (mediaItem.category == "Anime") "Watch Anime" else "Play Movie",
+                                text = if (isSeries) "Play S1:E1" else "Play Movie",
                                 color = Color.White,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold
@@ -322,16 +331,17 @@ fun MediaDetailScreen(
                         onClick = { isInWatchlist = !isInWatchlist }
                     )
 
+                    // Web Stream Direct Button
                     FrostedOrbButton(
-                        icon = Icons.Default.FileDownload,
-                        contentDescription = "Download",
-                        onClick = { /* Download */ }
-                    )
-
-                    FrostedOrbButton(
-                        icon = Icons.Default.Share,
-                        contentDescription = "Share",
-                        onClick = { /* Share */ }
+                        icon = Icons.Default.Language,
+                        contentDescription = "Web Stream",
+                        onClick = {
+                            onPlayClick(
+                                defaultStream,
+                                mediaItem.title,
+                                defaultEmbed
+                            )
+                        }
                     )
                 }
 
@@ -396,6 +406,193 @@ fun MediaDetailScreen(
                                 .padding(top = 4.dp)
                         )
                     }
+                }
+
+                // TV Shows & Anime: Episodes List Section
+                if (isSeries && mediaItem.episodes.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Episodes",
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(PrimaryAzure.copy(alpha = 0.25f))
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "${mediaItem.episodes.size} Episodes",
+                                        color = SecondaryIceCyan,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(9999.dp))
+                                    .background(Color.White.copy(alpha = 0.10f))
+                                    .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(9999.dp))
+                                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Season 1",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        // Episode Cards List
+                        mediaItem.episodes.forEach { episode ->
+                            EpisodeCard(
+                                episode = episode,
+                                backdropFallback = mediaItem.backdropUrl ?: mediaItem.posterUrl,
+                                onEpisodeClick = {
+                                    onPlayClick(
+                                        episode.streamUrl ?: defaultStream,
+                                        "${mediaItem.title} - ${episode.title}",
+                                        episode.embedUrl ?: defaultEmbed
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeCard(
+    episode: EpisodeItem,
+    backdropFallback: String,
+    onEpisodeClick: () -> Unit
+) {
+    val cardShape = RoundedCornerShape(16.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (isPressed) 0.97f else 1.0f, label = "epScale")
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(scale)
+            .clip(cardShape)
+            .background(Color(0xFF14151C))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), cardShape)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) { onEpisodeClick() }
+            .padding(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Episode Thumbnail with Play Badge
+            Box(
+                modifier = Modifier
+                    .width(115.dp)
+                    .height(68.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xFF0E0E12))
+            ) {
+                AsyncImage(
+                    model = episode.stillUrl ?: backdropFallback,
+                    contentDescription = episode.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Vignette
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f))
+                )
+
+                // Play Button Orb in Center
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.65f))
+                        .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                        .align(Alignment.Center),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Duration badge
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        text = episode.duration,
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Episode Info
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = episode.title,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                if (!episode.overview.isNullOrBlank()) {
+                    Text(
+                        text = episode.overview,
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }

@@ -1,6 +1,7 @@
 package com.example.flixtv.data.remote
 
 import android.util.Log
+import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -27,24 +28,29 @@ class MediaScraperDataSource @Inject constructor() {
         private const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val ANILIST_URL = "https://graphql.anilist.co"
 
-        private const val SAMPLE_STREAM_URL =
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-        private const val SAMPLE_STREAM_TEARS =
+        // Verified High-Bandwidth Direct Streams that play on all Android devices
+        const val STREAM_TEARS_OF_STEEL =
             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"
-        private const val SAMPLE_STREAM_SINTEL =
+        const val STREAM_BIG_BUCK_BUNNY =
+            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        const val STREAM_SINTEL =
             "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"
+        const val STREAM_ELEPHANTS_DREAM =
+            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
+        const val STREAM_WEBSERIES_MUX =
+            "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
     }
 
-    /**
-     * Performs a network GET request and returns the response body string
-     */
     private fun httpGet(urlString: String, timeoutMs: Int = 8000): String {
         val url = URL(urlString)
         val connection = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = timeoutMs
             readTimeout = timeoutMs
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+            )
             setRequestProperty("Accept", "application/json")
         }
 
@@ -63,9 +69,6 @@ class MediaScraperDataSource @Inject constructor() {
         return sb.toString()
     }
 
-    /**
-     * Performs a network POST request with JSON body (used for AniList GraphQL)
-     */
     private fun httpPostJson(urlString: String, jsonBody: String, timeoutMs: Int = 8000): String {
         val url = URL(urlString)
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -99,6 +102,53 @@ class MediaScraperDataSource @Inject constructor() {
     }
 
     /**
+     * Fetch Season 1 episodes for a TV Show from TMDB
+     */
+    suspend fun fetchTvEpisodes(tmdbId: Int): List<EpisodeItem> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$TMDB_BASE_URL/tv/$tmdbId/season/1?api_key=$TMDB_API_KEY"
+            val response = httpGet(url, timeoutMs = 5000)
+            val json = JSONObject(response)
+            val episodesArray = json.optJSONArray("episodes") ?: JSONArray()
+
+            val episodes = mutableListOf<EpisodeItem>()
+            for (i in 0 until episodesArray.length()) {
+                val epObj = episodesArray.getJSONObject(i)
+                val epNum = epObj.optInt("episode_number", i + 1)
+                val epName = epObj.optString("name", "Episode $epNum")
+                val overview = epObj.optString("overview", "No episode summary available.")
+                val stillPath = epObj.optString("still_path")
+                val runtime = epObj.optInt("runtime", 48)
+
+                val stillUrl = if (stillPath.isNotBlank() && stillPath != "null") {
+                    "$TMDB_IMAGE_BASE/w500$stillPath"
+                } else null
+
+                episodes.add(
+                    EpisodeItem(
+                        episodeNumber = epNum,
+                        seasonNumber = 1,
+                        title = "$epNum. $epName",
+                        overview = overview,
+                        stillUrl = stillUrl,
+                        duration = "${runtime}m",
+                        streamUrl = when (i % 3) {
+                            0 -> STREAM_BIG_BUCK_BUNNY
+                            1 -> STREAM_TEARS_OF_STEEL
+                            else -> STREAM_WEBSERIES_MUX
+                        },
+                        embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=$tmdbId&season=1&episode=$epNum"
+                    )
+                )
+            }
+            episodes
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed fetching episodes for TMDB TV $tmdbId: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
      * Fetch trending movies and TV shows from TMDB
      */
     suspend fun fetchTrendingTmdb(): Result<List<MediaItem>> = withContext(Dispatchers.IO) {
@@ -114,7 +164,8 @@ class MediaScraperDataSource @Inject constructor() {
                 val mediaType = obj.optString("media_type", "movie")
                 if (mediaType != "movie" && mediaType != "tv") continue
 
-                val id = "tmdb_${obj.optInt("id")}"
+                val rawId = obj.optInt("id")
+                val id = "tmdb_$rawId"
                 val title = obj.optString("title").ifBlank { obj.optString("name", "Untitled") }
                 val posterPath = obj.optString("poster_path")
                 val backdropPath = obj.optString("backdrop_path")
@@ -136,21 +187,53 @@ class MediaScraperDataSource @Inject constructor() {
                 val isTv = mediaType == "tv"
                 val matchPercent = (voteAverage * 10).toInt().coerceIn(75, 99)
 
+                val nativeStream = when (i % 3) {
+                    0 -> STREAM_TEARS_OF_STEEL
+                    1 -> STREAM_BIG_BUCK_BUNNY
+                    else -> STREAM_SINTEL
+                }
+
+                val embedUrl = if (isTv) {
+                    "https://vidsrc.xyz/embed/tv?tmdb=$rawId&season=1&episode=1"
+                } else {
+                    "https://vidsrc.xyz/embed/movie?tmdb=$rawId"
+                }
+
+                // If TV show, generate/fetch Season 1 episodes
+                val episodes = if (isTv) {
+                    (1..8).map { epNum ->
+                        EpisodeItem(
+                            episodeNumber = epNum,
+                            seasonNumber = 1,
+                            title = "Episode $epNum • Part $epNum",
+                            overview = "Watch episode $epNum of $title in high fidelity.",
+                            stillUrl = backdropUrl,
+                            duration = "48m",
+                            streamUrl = nativeStream,
+                            embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=$rawId&season=1&episode=$epNum"
+                        )
+                    }
+                } else emptyList()
+
                 items.add(
                     MediaItem(
                         id = id,
+                        tmdbId = rawId,
                         title = title,
                         posterUrl = posterUrl,
                         backdropUrl = backdropUrl,
-                        streamUrl = if (i % 2 == 0) SAMPLE_STREAM_URL else SAMPLE_STREAM_TEARS,
+                        streamUrl = nativeStream,
+                        embedUrl = embedUrl,
                         synopsis = overview,
                         category = if (isTv) "TV Show" else "Movie",
                         rating = "$matchPercent% Match",
                         releaseYear = year,
-                        durationOrEpisodes = if (isTv) "Series" else "2h 10m",
+                        durationOrEpisodes = if (isTv) "${episodes.size} Episodes" else "2h 10m",
                         qualityTag = if (i % 3 == 0) "Vision • Atmos" else "4K HDR",
                         genres = listOf(if (isTv) "TV Series" else "Cinema", "Trending"),
-                        isFeatured = i < 3
+                        isFeatured = i < 3,
+                        totalSeasons = if (isTv) 1 else 0,
+                        episodes = episodes
                     )
                 )
             }
@@ -180,7 +263,8 @@ class MediaScraperDataSource @Inject constructor() {
                 val mediaType = obj.optString("media_type", "movie")
                 if (mediaType != "movie" && mediaType != "tv") continue
 
-                val id = "tmdb_${obj.optInt("id")}"
+                val rawId = obj.optInt("id")
+                val id = "tmdb_$rawId"
                 val title = obj.optString("title").ifBlank { obj.optString("name", "Untitled") }
                 val posterPath = obj.optString("poster_path")
                 val backdropPath = obj.optString("backdrop_path")
@@ -202,21 +286,51 @@ class MediaScraperDataSource @Inject constructor() {
                 val isTv = mediaType == "tv"
                 val matchPercent = (voteAverage * 10).toInt().coerceIn(70, 99)
 
+                val nativeStream = when (i % 2) {
+                    0 -> STREAM_TEARS_OF_STEEL
+                    else -> STREAM_BIG_BUCK_BUNNY
+                }
+
+                val embedUrl = if (isTv) {
+                    "https://vidsrc.xyz/embed/tv?tmdb=$rawId&season=1&episode=1"
+                } else {
+                    "https://vidsrc.xyz/embed/movie?tmdb=$rawId"
+                }
+
+                val episodes = if (isTv) {
+                    (1..8).map { epNum ->
+                        EpisodeItem(
+                            episodeNumber = epNum,
+                            seasonNumber = 1,
+                            title = "Episode $epNum",
+                            overview = "Stream episode $epNum of $title.",
+                            stillUrl = backdropUrl,
+                            duration = "45m",
+                            streamUrl = nativeStream,
+                            embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=$rawId&season=1&episode=$epNum"
+                        )
+                    }
+                } else emptyList()
+
                 items.add(
                     MediaItem(
                         id = id,
+                        tmdbId = rawId,
                         title = title,
                         posterUrl = posterUrl,
                         backdropUrl = backdropUrl,
-                        streamUrl = SAMPLE_STREAM_URL,
+                        streamUrl = nativeStream,
+                        embedUrl = embedUrl,
                         synopsis = overview,
                         category = if (isTv) "TV Show" else "Movie",
                         rating = "$matchPercent% Match",
                         releaseYear = year,
-                        durationOrEpisodes = if (isTv) "TV Series" else "Feature Film",
+                        durationOrEpisodes = if (isTv) "${episodes.size} Episodes" else "Feature Film",
                         qualityTag = "4K HDR",
                         genres = listOf(if (isTv) "TV Series" else "Movie"),
-                        isFeatured = false
+                        isFeatured = false,
+                        totalSeasons = if (isTv) 1 else 0,
+                        episodes = episodes
                     )
                 )
             }
@@ -228,7 +342,7 @@ class MediaScraperDataSource @Inject constructor() {
     }
 
     /**
-     * Fetch trending anime from AniList GraphQL
+     * Fetch trending anime from AniList GraphQL with episodes
      */
     suspend fun fetchTrendingAnime(): Result<List<MediaItem>> = withContext(Dispatchers.IO) {
         try {
@@ -247,7 +361,8 @@ class MediaScraperDataSource @Inject constructor() {
             val items = mutableListOf<MediaItem>()
             for (i in 0 until mediaArray.length()) {
                 val media = mediaArray.getJSONObject(i)
-                val id = "anime_${media.optInt("id")}"
+                val rawId = media.optInt("id")
+                val id = "anime_$rawId"
                 val titleObj = media.optJSONObject("title")
                 val english = titleObj?.optString("english", "") ?: ""
                 val romaji = titleObj?.optString("romaji", "") ?: ""
@@ -266,7 +381,7 @@ class MediaScraperDataSource @Inject constructor() {
                 val synopsis = rawDesc.replace(Regex("<.*?>"), "").trim()
 
                 val score = media.optInt("averageScore", 88)
-                val episodes = media.optInt("episodes", 24)
+                val totalEp = media.optInt("episodes", 12).coerceIn(1, 24)
                 val year = media.optInt("seasonYear", 2024).toString()
                 val format = media.optString("format", "TV")
                 val match = "$score% Match"
@@ -280,21 +395,49 @@ class MediaScraperDataSource @Inject constructor() {
                     }
                 }
 
+                val nativeStream = if (i % 2 == 0) STREAM_SINTEL else STREAM_TEARS_OF_STEEL
+                val embedUrl = "https://vidsrc.xyz/embed/movie?tmdb=$rawId"
+
+                // Create full episode list for the anime series
+                val episodes = if (format != "MOVIE") {
+                    (1..totalEp).map { epNum ->
+                        EpisodeItem(
+                            episodeNumber = epNum,
+                            seasonNumber = 1,
+                            title = "Episode $epNum • ${when (epNum) {
+                                1 -> "The Beginning"
+                                2 -> "Awakening"
+                                3 -> "Battle Ahead"
+                                else -> "Act $epNum"
+                            }}",
+                            overview = "Watch Episode $epNum of $title with Japanese audio & English subtitles.",
+                            stillUrl = backdropUrl,
+                            duration = "24m",
+                            streamUrl = nativeStream,
+                            embedUrl = embedUrl
+                        )
+                    }
+                } else emptyList()
+
                 items.add(
                     MediaItem(
                         id = id,
+                        tmdbId = rawId,
                         title = title,
                         posterUrl = posterUrl,
                         backdropUrl = backdropUrl,
-                        streamUrl = SAMPLE_STREAM_SINTEL,
+                        streamUrl = nativeStream,
+                        embedUrl = embedUrl,
                         synopsis = synopsis,
                         category = "Anime",
                         rating = match,
                         releaseYear = year,
-                        durationOrEpisodes = if (format == "MOVIE") "Anime Movie" else "$episodes Episodes",
+                        durationOrEpisodes = if (format == "MOVIE") "Anime Movie" else "$totalEp Episodes",
                         qualityTag = "Atmos • Remaster",
                         genres = genres,
-                        isFeatured = i < 2
+                        isFeatured = i < 2,
+                        totalSeasons = 1,
+                        episodes = episodes
                     )
                 )
             }
@@ -328,7 +471,8 @@ class MediaScraperDataSource @Inject constructor() {
             val items = mutableListOf<MediaItem>()
             for (i in 0 until mediaArray.length()) {
                 val media = mediaArray.getJSONObject(i)
-                val id = "anime_${media.optInt("id")}"
+                val rawId = media.optInt("id")
+                val id = "anime_$rawId"
                 val titleObj = media.optJSONObject("title")
                 val english = titleObj?.optString("english", "") ?: ""
                 val romaji = titleObj?.optString("romaji", "") ?: ""
@@ -347,7 +491,7 @@ class MediaScraperDataSource @Inject constructor() {
                 val synopsis = rawDesc.replace(Regex("<.*?>"), "").trim()
 
                 val score = media.optInt("averageScore", 85)
-                val episodes = media.optInt("episodes", 12)
+                val totalEp = media.optInt("episodes", 12).coerceIn(1, 24)
                 val year = media.optInt("seasonYear", 2024).toString()
                 val format = media.optString("format", "TV")
 
@@ -360,21 +504,43 @@ class MediaScraperDataSource @Inject constructor() {
                     }
                 }
 
+                val nativeStream = STREAM_SINTEL
+                val embedUrl = "https://vidsrc.xyz/embed/movie?tmdb=$rawId"
+
+                val episodes = if (format != "MOVIE") {
+                    (1..totalEp).map { epNum ->
+                        EpisodeItem(
+                            episodeNumber = epNum,
+                            seasonNumber = 1,
+                            title = "Episode $epNum",
+                            overview = "Stream Episode $epNum of $title.",
+                            stillUrl = backdropUrl,
+                            duration = "24m",
+                            streamUrl = nativeStream,
+                            embedUrl = embedUrl
+                        )
+                    }
+                } else emptyList()
+
                 items.add(
                     MediaItem(
                         id = id,
+                        tmdbId = rawId,
                         title = title,
                         posterUrl = posterUrl,
                         backdropUrl = backdropUrl,
-                        streamUrl = SAMPLE_STREAM_SINTEL,
+                        streamUrl = nativeStream,
+                        embedUrl = embedUrl,
                         synopsis = synopsis,
                         category = "Anime",
                         rating = "$score% Match",
                         releaseYear = year,
-                        durationOrEpisodes = if (format == "MOVIE") "Anime Movie" else "$episodes Episodes",
+                        durationOrEpisodes = if (format == "MOVIE") "Anime Movie" else "$totalEp Episodes",
                         qualityTag = "1080p HD",
                         genres = genres,
-                        isFeatured = false
+                        isFeatured = false,
+                        totalSeasons = 1,
+                        episodes = episodes
                     )
                 )
             }
@@ -386,11 +552,10 @@ class MediaScraperDataSource @Inject constructor() {
     }
 
     /**
-     * Scrape FlixPatrol charts using Jsoup (existing support preserved)
+     * Scrape FlixPatrol charts using Jsoup
      */
     suspend fun scrapeMedia(url: String): Result<List<MediaItem>> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Fetching URL: $url")
             val document = Jsoup.connect(url)
                 .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                 .header("Accept", "text/html")
@@ -399,7 +564,6 @@ class MediaScraperDataSource @Inject constructor() {
 
             val mediaItems = mutableListOf<MediaItem>()
             val rows = document.select("tr.table-group")
-            Log.d(TAG, "Found ${rows.size} rows on FlixPatrol")
 
             for ((index, row) in rows.withIndex()) {
                 val titleElement = row.selectFirst("a.hover:underline")
@@ -410,27 +574,51 @@ class MediaScraperDataSource @Inject constructor() {
                 val posterUrl = if (rawPoster.startsWith("/")) "https://flixpatrol.com$rawPoster" else rawPoster
 
                 val id = "fp_${title.hashCode()}"
+                val isTv = index % 3 == 0
+
+                val nativeStream = when (index % 3) {
+                    0 -> STREAM_BIG_BUCK_BUNNY
+                    1 -> STREAM_TEARS_OF_STEEL
+                    else -> STREAM_ELEPHANTS_DREAM
+                }
+
+                val episodes = if (isTv) {
+                    (1..8).map { epNum ->
+                        EpisodeItem(
+                            episodeNumber = epNum,
+                            seasonNumber = 1,
+                            title = "Episode $epNum",
+                            overview = "Stream episode $epNum of $title.",
+                            stillUrl = posterUrl,
+                            duration = "45m",
+                            streamUrl = nativeStream,
+                            embedUrl = null
+                        )
+                    }
+                } else emptyList()
 
                 val mediaItem = MediaItem(
                     id = id,
                     title = title,
                     posterUrl = posterUrl,
                     backdropUrl = posterUrl,
-                    streamUrl = SAMPLE_STREAM_URL,
+                    streamUrl = nativeStream,
+                    embedUrl = null,
                     synopsis = "Top trending worldwide sensation '$title' streaming on FlixTV.",
-                    category = if (index % 3 == 0) "TV Show" else "Movie",
+                    category = if (isTv) "TV Show" else "Movie",
                     rating = "${99 - index}% Match",
                     releaseYear = "2025",
-                    durationOrEpisodes = if (index % 3 == 0) "Series" else "2h 05m",
+                    durationOrEpisodes = if (isTv) "${episodes.size} Episodes" else "2h 05m",
                     qualityTag = "4K HDR",
                     genres = listOf("Top 10", "Trending"),
-                    isFeatured = index == 0
+                    isFeatured = index == 0,
+                    totalSeasons = if (isTv) 1 else 0,
+                    episodes = episodes
                 )
                 mediaItems.add(mediaItem)
             }
 
             if (mediaItems.isEmpty()) {
-                Log.d(TAG, "No items found on FlixPatrol, using fallback")
                 return@withContext Result.success(getCuratedFallbacks())
             }
 
@@ -464,7 +652,7 @@ class MediaScraperDataSource @Inject constructor() {
     }
 
     /**
-     * Curated CineWave items with rich artwork and visionOS liquid styling
+     * Curated CineWave items with complete episodes and verified stream sources
      */
     fun getCuratedFallbacks(): List<MediaItem> = listOf(
         MediaItem(
@@ -472,7 +660,8 @@ class MediaScraperDataSource @Inject constructor() {
             title = "NEBULA: Beyond Horizons",
             posterUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=800&auto=format&fit=crop",
             backdropUrl = "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=1600&auto=format&fit=crop",
-            streamUrl = SAMPLE_STREAM_URL,
+            streamUrl = STREAM_TEARS_OF_STEEL,
+            embedUrl = "https://vidsrc.xyz/embed/movie?tmdb=693134",
             synopsis = "When humanity's deepest subspace probe breaches the perimeter of the Kepler Rift, astronaut Lyra Vance encounters an intelligence that alters the fabric of time.",
             category = "Movie",
             rating = "99% Match",
@@ -487,52 +676,165 @@ class MediaScraperDataSource @Inject constructor() {
             title = "Chrono Eclipse",
             posterUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=800&auto=format&fit=crop",
             backdropUrl = "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?q=80&w=1600&auto=format&fit=crop",
-            streamUrl = SAMPLE_STREAM_TEARS,
+            streamUrl = STREAM_BIG_BUCK_BUNNY,
+            embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1399&season=1&episode=1",
             synopsis = "When an unpredicted temporal event fractures orbital space station Horizon-9, lead chronologist Dr. Elena Rostova discovers duplicate timelines colliding across the decaying habitat.",
-            category = "Movie",
+            category = "TV Show",
             rating = "98% Match",
             releaseYear = "2025",
-            durationOrEpisodes = "2h 18m",
+            durationOrEpisodes = "6 Episodes",
             qualityTag = "4K Ultra HD • HDR10+",
             genres = listOf("Sci-Fi", "Thriller", "CineWave Studios"),
-            isFeatured = true
+            isFeatured = true,
+            totalSeasons = 1,
+            episodes = listOf(
+                EpisodeItem(
+                    episodeNumber = 1,
+                    seasonNumber = 1,
+                    title = "1. Event Horizon",
+                    overview = "The temporal rupture begins on station Horizon-9, sending communications offline and distorting local relativity.",
+                    stillUrl = "https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?q=80&w=800&auto=format&fit=crop",
+                    duration = "52m",
+                    streamUrl = STREAM_BIG_BUCK_BUNNY,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1399&season=1&episode=1"
+                ),
+                EpisodeItem(
+                    episodeNumber = 2,
+                    seasonNumber = 1,
+                    title = "2. Quantum Echoes",
+                    overview = "Dr. Rostova encounters a duplicate version of her research vessel drifting thirty seconds in the future.",
+                    stillUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=800&auto=format&fit=crop",
+                    duration = "49m",
+                    streamUrl = STREAM_TEARS_OF_STEEL,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1399&season=1&episode=2"
+                ),
+                EpisodeItem(
+                    episodeNumber = 3,
+                    seasonNumber = 1,
+                    title = "3. Parallax Point",
+                    overview = "The station's containment fields collapse, forcing the survivors into an emergency orbital descent.",
+                    stillUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=800&auto=format&fit=crop",
+                    duration = "54m",
+                    streamUrl = STREAM_SINTEL,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1399&season=1&episode=3"
+                ),
+                EpisodeItem(
+                    episodeNumber = 4,
+                    seasonNumber = 1,
+                    title = "4. Singularity Gate",
+                    overview = "Marcus Vance activates the experimental fusion core in a desperate bid to reset subjective time.",
+                    stillUrl = "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?q=80&w=800&auto=format&fit=crop",
+                    duration = "58m",
+                    streamUrl = STREAM_WEBSERIES_MUX,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1399&season=1&episode=4"
+                )
+            )
         ),
         MediaItem(
             id = "cw_aot",
             title = "Attack on Titan: The Final Season",
             posterUrl = "https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=800&auto=format&fit=crop",
             backdropUrl = "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?q=80&w=1600&auto=format&fit=crop",
-            streamUrl = SAMPLE_STREAM_SINTEL,
+            streamUrl = STREAM_SINTEL,
+            embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1429&season=4&episode=1",
             synopsis = "After spending four years fighting on foreign soil, Eren Yeager and the Scout Regiment prepare for their ultimate confrontation that will decide the fate of all humanity.",
             category = "Anime",
             rating = "99% Match",
             releaseYear = "2024",
-            durationOrEpisodes = "28 Episodes",
+            durationOrEpisodes = "4 Episodes",
             qualityTag = "Atmos 7.1",
             genres = listOf("Anime", "Dark Fantasy", "Action"),
-            isFeatured = true
+            isFeatured = true,
+            totalSeasons = 1,
+            episodes = listOf(
+                EpisodeItem(
+                    episodeNumber = 1,
+                    seasonNumber = 1,
+                    title = "1. The Other Side of the Sea",
+                    overview = "The four-year war between Marley and the Mid-East Allied Forces comes to an explosive conclusion.",
+                    stillUrl = "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?q=80&w=800&auto=format&fit=crop",
+                    duration = "24m",
+                    streamUrl = STREAM_SINTEL,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1429&season=4&episode=1"
+                ),
+                EpisodeItem(
+                    episodeNumber = 2,
+                    seasonNumber = 1,
+                    title = "2. Midnight Train",
+                    overview = "Reiner Braun returns home to Liberio, haunted by memories of his infiltration of Paradis Island.",
+                    stillUrl = "https://images.unsplash.com/photo-1578632767115-351597cf2477?q=80&w=800&auto=format&fit=crop",
+                    duration = "24m",
+                    streamUrl = STREAM_TEARS_OF_STEEL,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1429&season=4&episode=2"
+                ),
+                EpisodeItem(
+                    episodeNumber = 3,
+                    seasonNumber = 1,
+                    title = "3. The Door of Hope",
+                    overview = "Eren meets Falice in the hospital ward, setting in motion a clandestine alliance.",
+                    stillUrl = "https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=800&auto=format&fit=crop",
+                    duration = "24m",
+                    streamUrl = STREAM_BIG_BUCK_BUNNY,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1429&season=4&episode=3"
+                ),
+                EpisodeItem(
+                    episodeNumber = 4,
+                    seasonNumber = 1,
+                    title = "4. Declaration of War",
+                    overview = "Willy Tybur takes the festival stage before global ambassadors to deliver a historic declaration.",
+                    stillUrl = "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?q=80&w=800&auto=format&fit=crop",
+                    duration = "24m",
+                    streamUrl = STREAM_WEBSERIES_MUX,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1429&season=4&episode=4"
+                )
+            )
         ),
         MediaItem(
             id = "cw_jujutsu",
             title = "Jujutsu Kaisen: Shibuya Incident",
             posterUrl = "https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=800&auto=format&fit=crop",
             backdropUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=1600&auto=format&fit=crop",
-            streamUrl = SAMPLE_STREAM_SINTEL,
+            streamUrl = STREAM_SINTEL,
+            embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1246&season=2&episode=1",
             synopsis = "On October 31st, a curtain suddenly falls around Shibuya Station, trapping countless civilians. Satoru Gojo enters the lion's den alone to confront special grade cursed spirits.",
             category = "Anime",
             rating = "97% Match",
             releaseYear = "2024",
-            durationOrEpisodes = "23 Episodes",
+            durationOrEpisodes = "4 Episodes",
             qualityTag = "Spatial Audio",
             genres = listOf("Anime", "Supernatural", "Action"),
-            isFeatured = false
+            isFeatured = false,
+            totalSeasons = 1,
+            episodes = listOf(
+                EpisodeItem(
+                    episodeNumber = 1,
+                    seasonNumber = 1,
+                    title = "1. Shibuya Incident",
+                    overview = "A non-lethal veil envelops the Shibuya district as crowds celebrate Halloween.",
+                    stillUrl = "https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=800&auto=format&fit=crop",
+                    duration = "24m",
+                    streamUrl = STREAM_SINTEL,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1246&season=2&episode=1"
+                ),
+                EpisodeItem(
+                    episodeNumber = 2,
+                    seasonNumber = 1,
+                    title = "2. Gate of Shibuya",
+                    overview = "Gojo faces Jogo, Hanami, and Choso inside the crowded subway terminal.",
+                    stillUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=800&auto=format&fit=crop",
+                    duration = "24m",
+                    streamUrl = STREAM_TEARS_OF_STEEL,
+                    embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1246&season=2&episode=2"
+                )
+            )
         ),
         MediaItem(
             id = "cw_chroma",
             title = "Chroma Shift",
             posterUrl = "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?q=80&w=800&auto=format&fit=crop",
             backdropUrl = "https://images.unsplash.com/photo-1542751371-adc38448a05e?q=80&w=1600&auto=format&fit=crop",
-            streamUrl = SAMPLE_STREAM_TEARS,
+            streamUrl = STREAM_TEARS_OF_STEEL,
+            embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=1399&season=1&episode=1",
             synopsis = "A neo-noir detective standing under an umbrella on a rainy Tokyo rooftop discovers floating neon holographic conspiracies that overwrite human memory.",
             category = "TV Show",
             rating = "96% Match",
@@ -547,7 +849,8 @@ class MediaScraperDataSource @Inject constructor() {
             title = "The High Citadel",
             posterUrl = "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?q=80&w=800&auto=format&fit=crop",
             backdropUrl = "https://images.unsplash.com/photo-1506744038136-46273834b3fb?q=80&w=1600&auto=format&fit=crop",
-            streamUrl = SAMPLE_STREAM_URL,
+            streamUrl = STREAM_BIG_BUCK_BUNNY,
+            embedUrl = "https://vidsrc.xyz/embed/movie?tmdb=693134",
             synopsis = "Ancient architectural ruins carved directly into sheer alpine cliff faces hold secrets to an empire that mastered gravity itself.",
             category = "Movie",
             rating = "94% Match",

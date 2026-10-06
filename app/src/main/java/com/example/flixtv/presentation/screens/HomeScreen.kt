@@ -38,7 +38,7 @@ fun HomeScreen(
     isLoading: Boolean,
     onCategorySelected: (String) -> Unit,
     onMediaClick: (MediaItem) -> Unit,
-    onPlayClick: (String) -> Unit
+    onPlayClick: (streamUrl: String, title: String, embedUrl: String?) -> Unit
 ) {
     Scaffold(
         topBar = {
@@ -46,7 +46,7 @@ fun HomeScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF08080C).copy(alpha = 0.75f))
+                    .background(Color(0xFF08080C).copy(alpha = 0.85f))
                     .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
@@ -62,10 +62,10 @@ fun HomeScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .size(34.dp)
+                                .clip(RoundedCornerShape(9.dp))
                                 .background(PrimaryAzure)
-                                .shadow(8.dp, RoundedCornerShape(8.dp), spotColor = PrimaryAzure),
+                                .shadow(8.dp, RoundedCornerShape(9.dp), spotColor = PrimaryAzure),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -76,14 +76,16 @@ fun HomeScreen(
                             )
                         }
 
-                        Text(
-                            text = "CineWave",
-                            style = MaterialTheme.typography.headlineMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = (-0.5).sp
-                            ),
-                            color = Color.White
-                        )
+                        Column {
+                            Text(
+                                text = "CineWave",
+                                style = MaterialTheme.typography.headlineMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = (-0.5).sp
+                                ),
+                                color = Color.White
+                            )
+                        }
                     }
 
                     // Profile Avatar Glass Orb
@@ -122,17 +124,25 @@ fun HomeScreen(
                 )
             }
 
-            // Cinematic Hero Spotlight Billboard (Only show when on All or Movies/Anime if featured exists)
+            // Cinematic Hero Spotlight Billboard (renders immediately from cache / fallbacks)
             val spotlightList = if (featuredItems.isNotEmpty()) {
-                if (selectedCategory == "All") featuredItems else featuredItems.filter { it.category.equals(selectedCategory, ignoreCase = true) }.ifEmpty { featuredItems }
+                if (selectedCategory == "All") featuredItems
+                else featuredItems.filter { it.category.equals(selectedCategory, ignoreCase = true) }.ifEmpty { featuredItems }
             } else mediaItems.take(4)
 
-            if (spotlightList.isNotEmpty() && !isLoading) {
+            if (spotlightList.isNotEmpty()) {
                 item {
                     HeroSpotlightSection(
                         featuredItems = spotlightList,
                         onItemClick = onMediaClick,
-                        onPlayClick = onPlayClick
+                        onPlayClick = { stream ->
+                            val featured = spotlightList.firstOrNull { it.streamUrl == stream } ?: spotlightList.first()
+                            onPlayClick(
+                                stream,
+                                featured.title,
+                                featured.embedUrl
+                            )
+                        }
                     )
                 }
             }
@@ -142,7 +152,7 @@ fun HomeScreen(
                 it.genres.any { g -> g.contains("Trending", ignoreCase = true) || g.contains("Top", ignoreCase = true) }
             }.ifEmpty { mediaItems.take(8) }
 
-            if (trendingRailItems.isNotEmpty() && !isLoading) {
+            if (trendingRailItems.isNotEmpty()) {
                 item {
                     Column(
                         modifier = Modifier

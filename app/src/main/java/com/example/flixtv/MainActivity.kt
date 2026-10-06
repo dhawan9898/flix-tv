@@ -13,7 +13,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
@@ -42,7 +41,6 @@ import com.example.flixtv.presentation.screens.MediaDetailScreen
 import com.example.flixtv.presentation.screens.SearchScreen
 import com.example.flixtv.presentation.screens.SettingsScreen
 import com.example.flixtv.theme.FlixTVTheme
-import com.example.flixtv.theme.PrimaryAzure
 import dagger.hilt.android.AndroidEntryPoint
 
 // Navigation 3 routes
@@ -51,7 +49,11 @@ private data object SearchRoute
 private data object AnimeRoute
 private data object SettingsRoute
 private data class DetailRoute(val mediaItem: MediaItem)
-private data class PlayerRoute(val streamUrl: String)
+private data class PlayerRoute(
+    val streamUrl: String,
+    val title: String,
+    val embedUrl: String? = null
+)
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -100,7 +102,9 @@ class MainActivity : ComponentActivity() {
                                         isLoading = isLoading,
                                         onCategorySelected = { viewModel.setCategory(it) },
                                         onMediaClick = { backStack.add(DetailRoute(it)) },
-                                        onPlayClick = { backStack.add(PlayerRoute(it)) }
+                                        onPlayClick = { stream, title, embed ->
+                                            backStack.add(PlayerRoute(stream, title, embed))
+                                        }
                                     )
                                 }
                                 is SearchRoute -> NavEntry(key) {
@@ -129,23 +133,32 @@ class MainActivity : ComponentActivity() {
                                             }
                                         },
                                         onMediaClick = { backStack.add(DetailRoute(it)) },
-                                        onPlayClick = { backStack.add(PlayerRoute(it)) }
+                                        onPlayClick = { stream, title, embed ->
+                                            backStack.add(PlayerRoute(stream, title, embed))
+                                        }
                                     )
                                 }
                                 is SettingsRoute -> NavEntry(key) {
-                                    SettingsScreen()
+                                    SettingsScreen(
+                                        onRefreshCatalog = { viewModel.loadData() }
+                                    )
                                 }
                                 is DetailRoute -> NavEntry(key) {
                                     MediaDetailScreen(
                                         mediaItem = key.mediaItem,
                                         onBackClick = { backStack.removeLastOrNull() },
-                                        onPlayClick = { streamUrl ->
-                                            backStack.add(PlayerRoute(streamUrl))
+                                        onPlayClick = { stream, title, embed ->
+                                            backStack.add(PlayerRoute(stream, title, embed))
                                         }
                                     )
                                 }
                                 is PlayerRoute -> NavEntry(key) {
-                                    VideoPlayerScreen(streamUrl = key.streamUrl)
+                                    VideoPlayerScreen(
+                                        streamUrl = key.streamUrl,
+                                        title = key.title,
+                                        embedUrl = key.embedUrl,
+                                        onBackClick = { backStack.removeLastOrNull() }
+                                    )
                                 }
                                 else -> error("Unknown route: $key")
                             }
@@ -183,7 +196,7 @@ private fun VisionOsFloatingDock(
         modifier = modifier
             .navigationBarsPadding()
             .clip(dockShape)
-            .background(Color(0xFF0F111A).copy(alpha = 0.82f))
+            .background(Color(0xFF0F111A).copy(alpha = 0.85f))
             .border(
                 width = 1.dp,
                 color = Color.White.copy(alpha = 0.22f),
