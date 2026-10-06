@@ -21,6 +21,8 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Sign with debug key by default so the generated release APK can be installed on any device
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {

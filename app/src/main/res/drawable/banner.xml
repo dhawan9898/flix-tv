@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+
+    <!-- Background Obsidian Gradient -->
+    <path
+        android:pathData="M0,0h320v180h-320z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="320"
+                android:endY="180"
+                android:type="linear">
+                <item android:color="#FF131317" android:offset="0.0" />
+                <item android:color="#FF08080C" android:offset="0.6" />
+                <item android:color="#FF040406" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Subtle Cyan Ambient Underglow -->
+    <path
+        android:pathData="M160,90m-80,0a80,80 0 1,1 160,0a80,80 0 1,1 -160,0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="160"
+                android:centerY="90"
+                android:gradientRadius="80"
+                android:type="radial">
+                <item android:color="#300A84FF" android:offset="0.0" />
+                <item android:color="#1064D2FF" android:offset="0.6" />
+                <item android:color="#0008080C" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Card Edge Specular Border -->
+    <path
+        android:pathData="M4,4h312v172h-312z"
+        android:strokeWidth="1"
+        android:strokeColor="#20FFFFFF"
+        android:fillColor="#00000000" />
+
+    <!-- FlixTV Play Glyph Logo (Left of Text) -->
+    <path
+        android:pathData="M95,65 C95,61.5 98.8,59.3 101.8,61.1 L124.5,77.1 C127.2,78.8 127.2,83.2 124.5,84.9 L101.8,100.9 C98.8,102.7 95,100.5 95,97.0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="95"
+                android:startY="60"
+                android:endX="127"
+                android:endY="102"
+                android:type="linear">
+                <item android:color="#FF64D2FF" android:offset="0.0" />
+                <item android:color="#FF0A84FF" android:offset="0.7" />
+                <item android:color="#FF005DB8" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner Core Play Highlight -->
+    <path
+        android:pathData="M102,73 L114,81 L102,89 Z"
+        android:fillColor="#FFFFFFFF" />
+
+    <!-- Wave Ribbon beside Logo -->
+    <path
+        android:pathData="M87,65 C87,61 91,59 93,61 L97,64 C95,71 93,77 93,81 C93,85 95,91 97,98 L93,101 C91,103 87,101 87,97 Z"
+        android:fillColor="#FF0A84FF" />
+
+    <!-- "FLIX" Text (Path rendering for crisp rendering without external font dependency) -->
+    <!-- F -->
+    <path android:pathData="M145,68 h18 v4 h-13 v9 h11 v4 h-11 v13 h-5 Z" android:fillColor="#FFFFFFFF" />
+    <!-- L -->
+    <path android:pathData="M170,68 h5 v26 h14 v4 h-19 Z" android:fillColor="#FFFFFFFF" />
+    <!-- I -->
+    <path android:pathData="M196,68 h5 v30 h-5 Z" android:fillColor="#FFFFFFFF" />
+    <!-- X -->
+    <path android:pathData="M208,68 h6 l6,13 l6,-13 h6 l-9,15 l9,15 h-6 l-6,-13 l-6,13 h-6 l9,-15 Z" android:fillColor="#FFFFFFFF" />
+
+    <!-- "TV" Accent Badge -->
+    <path
+        android:pathData="M238,70 h28 v26 h-28 Z"
+        android:fillColor="#FF0A84FF" />
+    <!-- T -->
+    <path android:pathData="M243,75 h10 v3 h-3.5 v14 h-3 v-14 h-3.5 Z" android:fillColor="#FFFFFFFF" />
+    <!-- V -->
+    <path android:pathData="M255,75 h3.2 l3,13.5 l3,-13.5 h3.2 l-4.7,17 h-3 Z" android:fillColor="#FFFFFFFF" />
+
+    <!-- Subtitle: STREAMING -->
+    <path
+        android:pathData="M145,108 h121 v1 h-121 Z"
+        android:fillColor="#30FFFFFF" />
+
+</vector>

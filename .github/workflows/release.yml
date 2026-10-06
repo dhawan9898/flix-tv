@@ -37,15 +37,11 @@ jobs:
 
       - name: Build Release APK
         # Assuming you have signature config set up via environment variables in your build.gradle.kts
-        # For this example, we build an unsigned release or rely on debug keys if not configured
+        # Builds signed release APK using signingConfig in build.gradle.kts
         run: ./gradlew assembleRelease
         env:
           VERSION_CODE: ${{ env.VERSION_CODE }}
           VERSION_NAME: ${{ env.VERSION_NAME }}
-
-      - name: Sign APK (Optional but recommended)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        run: echo "Signing step skipped for boilerplate. Outputting to app/build/outputs/apk/release/"
 
       - name: Create GitHub Release
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
