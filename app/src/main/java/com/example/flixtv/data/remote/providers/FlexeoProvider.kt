@@ -1,317 +1,249 @@
 package com.example.flixtv.data.remote.providers
 
 import android.util.Log
-import com.example.flixtv.domain.models.EpisodeItem
+import com.example.flixtv.data.remote.HttpFetcher
 import com.example.flixtv.domain.models.MediaItem
+import com.example.flixtv.domain.models.StreamSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
-import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
+import java.net.URLEncoder
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Flexeo provider (movies & TV shows only - anime comes exclusively from [HiAnimeProvider]).
+ *
+ * Structured like the HiAnime provider: shared [HttpFetcher] (timeouts, retries, cache), real
+ * catalog/search results only, and stream resolution that walks the site's mirrors with hedged
+ * parallel fallbacks. Nothing here ever substitutes demo content: when no stream can be
+ * extracted the real embed page is returned for the web player, and when even that is impossible
+ * [SourceUnavailableException] is thrown.
+ */
 @Singleton
-class FlexeoProvider @Inject constructor() {
+class FlexeoProvider @Inject constructor(
+    private val http: HttpFetcher
+) {
 
     companion object {
         private const val TAG = "FlexeoProvider"
+        const val PROVIDER_NAME = "Flexeo"
         const val BASE_URL = "https://flexeo.tv"
         const val MIRROR_URL = "https://flexeo.site"
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        const val ID_PREFIX = "flexeo_"
+
+        private val MIRRORS = listOf(BASE_URL, MIRROR_URL)
+        private const val PAGE_TTL_MS = 5 * 60 * 1000L
+        private const val HEDGE_DELAY_MS = 2_500L
+        private const val CATALOG_LIMIT = 40
+        private const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
+        private const val TMDB_GENRE_ANIMATION = 16
+
+        private val M3U8_REGEX = Regex("""https?://[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*""")
+        private val MP4_REGEX = Regex("""https?://[^\s"'<>\\]+\.mp4[^\s"'<>\\]*""")
+        private val PATH_ID_REGEX = Regex("""/(movie|tv|series|film)s?/(?:[a-z0-9-]*-)?(\d+)""", RegexOption.IGNORE_CASE)
+
+        /** Whether [item] is something this provider can resolve (anything that isn't anime). */
+        fun handles(item: MediaItem): Boolean = !HiAnimeProvider.isAnime(item)
+
+        internal fun looksLikeAnime(text: String): Boolean = text.lowercase(Locale.US).contains("anime")
     }
 
-    /**
-     * Scrapes featured/trending Movies & TV Shows from Flexeo / TMDB catalog
-     */
+    private fun embedUrl(origin: String, tmdbId: Int, isTv: Boolean, season: Int, episode: Int) =
+        if (isTv) "$origin/embed/tv/$tmdbId/$season/$episode" else "$origin/embed/movie/$tmdbId"
+
+    // ------------------------------------------------------------- catalog
+
+    /** Featured/trending movies & shows from the site. Empty when no mirror can be reached. */
     suspend fun getCatalog(): List<MediaItem> = withContext(Dispatchers.IO) {
-        val items = mutableListOf<MediaItem>()
+        val html = fetchFromMirrors("/") ?: return@withContext emptyList()
         try {
-            // Attempt scraping Flexeo site
-            val doc = Jsoup.connect(BASE_URL)
-                .userAgent(USER_AGENT)
-                .timeout(10000)
-                .ignoreContentType(true)
-                .get()
-
-            val movieElements = doc.select(".movie-card, .film-item, article.item, .flx-card")
-            for (el in movieElements) {
-                val title = el.select(".title, h3, .film-name").text().trim()
-                if (title.isBlank()) continue
-
-                val poster = el.select("img").attr("src").ifEmpty { el.select("img").attr("data-src") }
-                val link = el.attr("href")
-                val tmdbId = link.filter { it.isDigit() }.toIntOrNull()
-
-                val item = MediaItem(
-                    id = "flexeo_${tmdbId ?: title.hashCode()}",
-                    tmdbId = tmdbId ?: 550,
-                    title = title,
-                    posterUrl = if (poster.startsWith("/")) "$BASE_URL$poster" else poster,
-                    backdropUrl = if (poster.startsWith("/")) "$BASE_URL$poster" else poster,
-                    embedUrl = if (tmdbId != null) "$BASE_URL/embed/movie/$tmdbId" else "$BASE_URL/embed/movie/550",
-                    streamUrl = getMovieEmbedUrl(tmdbId ?: 550),
-                    synopsis = "Watch $title streaming in HD on Flexeo.",
-                    category = if (link.contains("tv") || link.contains("series")) "TV Show" else "Movie",
-                    provider = "Flexeo",
-                    rating = "98% Match",
-                    releaseYear = "2025",
-                    qualityTag = "4K HDR",
-                    genres = listOf("Action", "Drama", "Sci-Fi")
-                )
-                items.add(item)
-            }
+            parseCards(html).take(CATALOG_LIMIT)
         } catch (e: Exception) {
-            Log.w(TAG, "Flexeo catalog direct scrape failed, populating Flexeo catalog: ${e.message}")
+            Log.w(TAG, "Flexeo catalog parse failed: ${e.message}")
+            emptyList()
         }
-
-        if (items.isEmpty()) {
-            items.addAll(getFlexeoCuratedCatalog())
-        }
-
-        return@withContext items
     }
 
-    /**
-     * Resolves the playable video stream URL from Flexeo for a given movie/show/episode.
-     */
-    suspend fun resolveStreamUrl(
-        tmdbId: Int?,
-        season: Int = 1,
-        episode: Int = 1,
-        isTvShow: Boolean = false,
-        fallbackEmbed: String? = null
-    ): String = withContext(Dispatchers.IO) {
-        val targetTmdb = tmdbId ?: 550
-        val embedUrl = if (isTvShow) {
-            getTvEmbedUrl(targetTmdb, season, episode)
-        } else {
-            getMovieEmbedUrl(targetTmdb)
-        }
-
-        Log.d(TAG, "Resolving stream for TMDB $targetTmdb from Flexeo embed: $embedUrl")
-
-        try {
-            // Attempt to fetch iframe source / video stream from Flexeo embed endpoint
-            val doc = Jsoup.connect(embedUrl)
-                .userAgent(USER_AGENT)
-                .referrer(BASE_URL)
-                .ignoreContentType(true)
-                .timeout(8000)
-                .get()
-
-            val html = doc.html()
-
-            // Look for m3u8 or mp4 stream links inside JavaScript or iframe tags
-            val m3u8Regex = Regex("""(https?://[^\s"'<>]+\.m3u8[^\s"'<>]*)""")
-            val mp4Regex = Regex("""(https?://[^\s"'<>]+\.mp4[^\s"'<>]*)""")
-
-            val m3u8Match = m3u8Regex.find(html)?.value
-            if (!m3u8Match.isNullOrBlank()) {
-                Log.i(TAG, "Extracted direct HLS stream from Flexeo: $m3u8Match")
-                return@withContext m3u8Match
-            }
-
-            val mp4Match = mp4Regex.find(html)?.value
-            if (!mp4Match.isNullOrBlank()) {
-                Log.i(TAG, "Extracted direct MP4 stream from Flexeo: $mp4Match")
-                return@withContext mp4Match
-            }
-
-            // Check if there is a inner iframe source
-            val iframeSrc = doc.select("iframe").attr("src")
-            if (iframeSrc.isNotBlank()) {
-                val fullIframe = if (iframeSrc.startsWith("//")) "https:$iframeSrc" else if (iframeSrc.startsWith("/")) "$BASE_URL$iframeSrc" else iframeSrc
-                Log.d(TAG, "Parsing inner iframe: $fullIframe")
-                
-                val innerDoc = Jsoup.connect(fullIframe)
-                    .userAgent(USER_AGENT)
-                    .referrer(embedUrl)
-                    .ignoreContentType(true)
-                    .timeout(8000)
-                    .get()
-
-                val innerHtml = innerDoc.html()
-                val innerM3u8 = m3u8Regex.find(innerHtml)?.value ?: mp4Regex.find(innerHtml)?.value
-                if (!innerM3u8.isNullOrBlank()) {
-                    Log.i(TAG, "Extracted stream from inner iframe: $innerM3u8")
-                    return@withContext innerM3u8
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Direct extraction for Flexeo embed failed: ${e.message}")
-        }
-
-        // Return embed URL or fallback stream URL
-        return@withContext fallbackEmbed ?: embedUrl
-    }
-
-    /**
-     * Search movies & TV shows on Flexeo
-     */
     suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<MediaItem>()
-        if (query.isBlank()) return@withContext results
-
+        if (query.isBlank()) return@withContext emptyList()
+        val body = fetchFromMirrors(
+            "/api/search?q=${URLEncoder.encode(query.trim().lowercase(Locale.US), "UTF-8")}",
+            json = true
+        ) ?: return@withContext emptyList()
         try {
-            val searchUrl = "$BASE_URL/api/search?q=${query.lowercase()}"
-            val connection = URL(searchUrl).openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("User-Agent", USER_AGENT)
-            connection.connectTimeout = 5000
-            connection.readTimeout = 5000
-
-            if (connection.responseCode == 200) {
-                val jsonStr = connection.inputStream.bufferedReader().use { it.readText() }
-                val jsonObj = JSONObject(jsonStr)
-                val itemsArr = jsonObj.optJSONArray("results") ?: jsonObj.optJSONArray("data")
-                if (itemsArr != null) {
-                    for (i in 0 until itemsArr.length()) {
-                        val obj = itemsArr.getJSONObject(i)
-                        val title = obj.optString("title", obj.optString("name", "Unknown"))
-                        val tmdbId = obj.optInt("id", obj.optInt("tmdb_id", 0))
-                        val posterPath = obj.optString("poster_path", "")
-                        val isTv = obj.optString("media_type") == "tv" || obj.has("first_air_date")
-
-                        val poster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w500$posterPath"
-                        results.add(
-                            MediaItem(
-                                id = "flexeo_search_$tmdbId",
-                                tmdbId = tmdbId,
-                                title = title,
-                                posterUrl = poster,
-                                backdropUrl = poster,
-                                embedUrl = if (isTv) getTvEmbedUrl(tmdbId, 1, 1) else getMovieEmbedUrl(tmdbId),
-                                streamUrl = if (isTv) getTvEmbedUrl(tmdbId, 1, 1) else getMovieEmbedUrl(tmdbId),
-                                synopsis = obj.optString("overview", "Stream $title on Flexeo TV."),
-                                category = if (isTv) "TV Show" else "Movie",
-                                provider = "Flexeo",
-                                rating = "95% Match",
-                                releaseYear = "2024",
-                                qualityTag = "HD 1080p"
-                            )
-                        )
-                    }
-                }
-            }
+            parseSearch(body)
         } catch (e: Exception) {
-            Log.w(TAG, "Flexeo search error: ${e.message}")
+            Log.w(TAG, "Flexeo search parse failed: ${e.message}")
+            emptyList()
         }
-
-        // Filter fallback catalog if search returned empty
-        if (results.isEmpty()) {
-            val curated = getFlexeoCuratedCatalog()
-            return@withContext curated.filter { it.title.contains(query, ignoreCase = true) }
-        }
-
-        return@withContext results
     }
 
-    private fun getMovieEmbedUrl(tmdbId: Int): String = "$BASE_URL/embed/movie/$tmdbId"
-    private fun getTvEmbedUrl(tmdbId: Int, season: Int, episode: Int): String = "$BASE_URL/embed/tv/$tmdbId/$season/$episode"
+    /** First mirror (in order) that answers. */
+    private suspend fun fetchFromMirrors(path: String, json: Boolean = false): String? {
+        val headers = if (json) mapOf("Accept" to "application/json") else mapOf("Accept" to "text/html,application/xhtml+xml")
+        for (origin in MIRRORS) {
+            try {
+                return http.getText("$origin$path", headers + ("Referer" to "$origin/"), ttlMs = PAGE_TTL_MS)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "$origin$path failed: ${e.message}")
+            }
+        }
+        return null
+    }
+
+    /** Parses the site's title cards; entries without a TMDB id, or that are anime, are dropped. */
+    internal fun parseCards(html: String): List<MediaItem> {
+        val doc = Jsoup.parse(html, BASE_URL)
+        val seen = HashSet<Int>()
+        val items = ArrayList<MediaItem>()
+        for (card in doc.select(".movie-card, .film-item, article.item, .flx-card")) {
+            val title = card.selectFirst(".title, h3, .film-name")?.text()?.trim().orEmpty()
+            val href = (if (card.`is`("a[href]")) card else card.selectFirst("a[href]"))?.attr("href").orEmpty()
+            val match = PATH_ID_REGEX.find(href) ?: continue
+            val tmdbId = match.groupValues[2].toIntOrNull() ?: continue
+            if (title.isBlank() || looksLikeAnime(href) || !seen.add(tmdbId)) continue
+
+            val img = card.selectFirst("img")
+            val poster = absolute(img?.attr("data-src").orEmpty().ifBlank { img?.attr("src").orEmpty() })
+            if (!poster.startsWith("http")) continue
+
+            val isTv = match.groupValues[1].lowercase(Locale.US).let { it == "tv" || it == "series" }
+            items.add(
+                MediaItem(
+                    id = "$ID_PREFIX$tmdbId",
+                    tmdbId = tmdbId,
+                    title = title,
+                    posterUrl = poster,
+                    backdropUrl = poster,
+                    // No stream here on purpose: real streams are resolved on play.
+                    streamUrl = null,
+                    embedUrl = embedUrl(BASE_URL, tmdbId, isTv, 1, 1),
+                    synopsis = "Watch $title in HD.",
+                    category = if (isTv) "TV Show" else "Movie",
+                    provider = PROVIDER_NAME,
+                    rating = "HD",
+                    releaseYear = "",
+                    durationOrEpisodes = if (isTv) "TV Series" else "Movie",
+                    qualityTag = "HD"
+                )
+            )
+        }
+        return items
+    }
+
+    /** Parses the search API (TMDB-shaped JSON), skipping anime. */
+    internal fun parseSearch(body: String): List<MediaItem> {
+        val root = JSONObject(body)
+        val arr: JSONArray = root.optJSONArray("results") ?: root.optJSONArray("data") ?: return emptyList()
+        val seen = HashSet<Int>()
+        val items = ArrayList<MediaItem>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val tmdbId = obj.optInt("id", obj.optInt("tmdb_id", 0))
+            val title = obj.optString("title").ifBlank { obj.optString("name") }
+            val mediaType = obj.optString("media_type")
+            if (tmdbId <= 0 || title.isBlank() || mediaType == "person" || !seen.add(tmdbId)) continue
+            if (isAnimeEntry(obj, mediaType)) continue
+
+            val posterPath = obj.optString("poster_path")
+            if (posterPath.isBlank() || posterPath == "null") continue
+            val poster = if (posterPath.startsWith("http")) posterPath else "$TMDB_IMAGE_BASE$posterPath"
+            val backdropPath = obj.optString("backdrop_path").takeIf { it.isNotBlank() && it != "null" }
+            val isTv = mediaType == "tv" || obj.has("first_air_date")
+            val date = obj.optString("release_date").ifBlank { obj.optString("first_air_date") }
+            val score = obj.optDouble("vote_average", 0.0)
+
+            items.add(
+                MediaItem(
+                    id = "$ID_PREFIX$tmdbId",
+                    tmdbId = tmdbId,
+                    title = title,
+                    posterUrl = poster,
+                    backdropUrl = backdropPath?.let { if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w1280$it" } ?: poster,
+                    streamUrl = null,
+                    embedUrl = embedUrl(BASE_URL, tmdbId, isTv, 1, 1),
+                    synopsis = obj.optString("overview").ifBlank { "Watch $title in HD." },
+                    category = if (isTv) "TV Show" else "Movie",
+                    provider = PROVIDER_NAME,
+                    rating = if (score > 0) "${(score * 10).toInt()}% Match" else "HD",
+                    releaseYear = date.take(4),
+                    durationOrEpisodes = if (isTv) "TV Series" else "Movie",
+                    qualityTag = "HD"
+                )
+            )
+        }
+        return items
+    }
+
+    /** Anime is HiAnime's job: drop explicit anime and Japanese-language animation. */
+    private fun isAnimeEntry(obj: JSONObject, mediaType: String): Boolean {
+        if (mediaType == "anime" || looksLikeAnime(obj.optString("genre")) || looksLikeAnime(obj.optString("type"))) return true
+        val genreIds = obj.optJSONArray("genre_ids")
+        val animation = genreIds != null && (0 until genreIds.length()).any { genreIds.optInt(it) == TMDB_GENRE_ANIMATION }
+        return animation && obj.optString("original_language") == "ja"
+    }
+
+    private fun absolute(url: String): String = when {
+        url.startsWith("//") -> "https:$url"
+        url.startsWith("/") -> "$BASE_URL$url"
+        else -> url
+    }
+
+    // -------------------------------------------------------------- streams
 
     /**
-     * High quality curated catalog fetched with Flexeo stream sources
+     * Resolves a playable source for a movie or a TV episode. Mirrors are tried with hedged
+     * parallel fallbacks. When no direct stream can be extracted, the real embed page URL is
+     * returned (it plays in the web player); throws [SourceUnavailableException] if there is
+     * nothing to resolve at all.
      */
-    private fun getFlexeoCuratedCatalog(): List<MediaItem> {
-        return listOf(
-            MediaItem(
-                id = "flexeo_1022789",
-                tmdbId = 1022789,
-                title = "Inside Out 2",
-                posterUrl = "https://image.tmdb.org/t/p/w500/vpnP13A24823S39S944a99.jpg",
-                backdropUrl = "https://image.tmdb.org/t/p/w1280/p3L142422789.jpg",
-                streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-                embedUrl = "$BASE_URL/embed/movie/1022789",
-                synopsis = "Teenager Riley's mind headquarters is undergoing a sudden demolition to make room for unexpected emotions like Anxiety!",
-                category = "Movie",
-                provider = "Flexeo",
-                rating = "99% Match",
-                releaseYear = "2024",
-                durationOrEpisodes = "1h 36m",
-                qualityTag = "4K HDR",
-                genres = listOf("Animation", "Family", "Comedy"),
-                isFeatured = true
-            ),
-            MediaItem(
-                id = "flexeo_533535",
-                tmdbId = 533535,
-                title = "Deadpool & Wolverine",
-                posterUrl = "https://image.tmdb.org/t/p/w500/8cdWjvZ2A1M936a281822a.jpg",
-                backdropUrl = "https://image.tmdb.org/t/p/w1280/yDHYTfA2424823.jpg",
-                streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-                embedUrl = "$BASE_URL/embed/movie/533535",
-                synopsis = "Wolverine is recovering from his injuries when he crosses paths with the loudmouth Deadpool. They team up to defeat a common enemy.",
-                category = "Movie",
-                provider = "Flexeo",
-                rating = "98% Match",
-                releaseYear = "2024",
-                durationOrEpisodes = "2h 08m",
-                qualityTag = "4K HDR",
-                genres = listOf("Action", "Comedy", "Sci-Fi"),
-                isFeatured = true
-            ),
-            MediaItem(
-                id = "flexeo_94605",
-                tmdbId = 94605,
-                title = "Arcane",
-                posterUrl = "https://image.tmdb.org/t/p/w500/fqld22332822a.jpg",
-                backdropUrl = "https://image.tmdb.org/t/p/w1280/fqld22332822a_bg.jpg",
-                streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
-                embedUrl = "$BASE_URL/embed/tv/94605/1/1",
-                synopsis = "Amid the stark discord of twin cities Piltover and Zaun, two sisters fight on opposing sides of a war between magic technologies.",
-                category = "TV Show",
-                provider = "Flexeo",
-                rating = "99% Match",
-                releaseYear = "2024",
-                durationOrEpisodes = "Season 2 • 9 Episodes",
-                qualityTag = "4K HDR",
-                genres = listOf("Animation", "Sci-Fi", "Action"),
-                totalSeasons = 2,
-                episodes = (1..9).map { epNum ->
-                    EpisodeItem(
-                        episodeNumber = epNum,
-                        seasonNumber = 2,
-                        title = "Arcane S2:E$epNum - Heavy Is The Crown",
-                        overview = "Vi and Jinx navigate the fallout of the Council explosion in Piltover.",
-                        stillUrl = "https://image.tmdb.org/t/p/w500/fqld22332822a.jpg",
-                        duration = "42m",
-                        embedUrl = "$BASE_URL/embed/tv/94605/2/$epNum",
-                        streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"
-                    )
-                }
-            ),
-            MediaItem(
-                id = "flexeo_93405",
-                tmdbId = 93405,
-                title = "Squid Game",
-                posterUrl = "https://image.tmdb.org/t/p/w500/dG4224823d.jpg",
-                backdropUrl = "https://image.tmdb.org/t/p/w1280/dG4224823d_bg.jpg",
-                streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4",
-                embedUrl = "$BASE_URL/embed/tv/93405/2/1",
-                synopsis = "Gi-hun returns to the deadly game with a new mission: stop the organizers once and for all.",
-                category = "TV Show",
-                provider = "Flexeo",
-                rating = "97% Match",
-                releaseYear = "2024",
-                durationOrEpisodes = "Season 2 • 7 Episodes",
-                qualityTag = "4K HDR",
-                genres = listOf("Thriller", "Drama", "Mystery"),
-                totalSeasons = 2,
-                episodes = (1..7).map { epNum ->
-                    EpisodeItem(
-                        episodeNumber = epNum,
-                        seasonNumber = 2,
-                        title = "Squid Game S2:E$epNum - Red Light, Green Light",
-                        overview = "Gi-hun re-enters the arena where old dangers and new players await.",
-                        stillUrl = "https://image.tmdb.org/t/p/w500/dG4224823d.jpg",
-                        duration = "55m",
-                        embedUrl = "$BASE_URL/embed/tv/93405/2/$epNum",
-                        streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/WeAreGoingOnBullrun.mp4"
-                    )
-                }
+    suspend fun resolveStream(item: MediaItem, season: Int = 1, episode: Int = 1): StreamSource =
+        withContext(Dispatchers.IO) {
+            val tmdbId = item.tmdbId
+                ?: throw SourceUnavailableException("\"${item.title}\" has no Flexeo id")
+            val isTv = item.category == "TV Show"
+
+            val direct = resolveFirst(MIRRORS, HEDGE_DELAY_MS) { origin ->
+                extract(embedUrl(origin, tmdbId, isTv, season, episode), origin)
+            }
+            direct ?: StreamSource(
+                streamUrl = embedUrl(BASE_URL, tmdbId, isTv, season, episode),
+                referer = "$BASE_URL/"
             )
-        )
+        }
+
+    /** Pulls an HLS/MP4 link out of the embed page, or out of its inner iframe. */
+    private suspend fun extract(embed: String, origin: String): StreamSource? {
+        val html = http.getText(embed, mapOf("Referer" to "$origin/"), retries = 0)
+        findStream(html)?.let { return StreamSource(it, referer = "$origin/") }
+
+        val iframeSrc = Jsoup.parse(html, embed).selectFirst("iframe[src]")?.attr("src").orEmpty()
+        val frame = resolveWebUrl(embed, iframeSrc) ?: return null
+        val innerHtml = http.getText(frame, mapOf("Referer" to embed), retries = 0)
+        val inner = findStream(innerHtml) ?: return null
+        val uri = URI(frame)
+        return StreamSource(inner, referer = "${uri.scheme}://${uri.authority}/")
+    }
+
+    private fun findStream(html: String): String? =
+        (M3U8_REGEX.find(html) ?: MP4_REGEX.find(html))?.value?.replace("\\/", "/")
+
+    /** The iframe src comes from a third-party page: only ever follow plain web URLs. */
+    private fun resolveWebUrl(base: String, src: String): String? {
+        if (src.isBlank()) return null
+        return try {
+            val resolved = URI(base).resolve(if (src.startsWith("//")) "https:$src" else src)
+            resolved.toString().takeIf { resolved.scheme == "https" || resolved.scheme == "http" }
+        } catch (e: Exception) {
+            null
+        }
     }
 }

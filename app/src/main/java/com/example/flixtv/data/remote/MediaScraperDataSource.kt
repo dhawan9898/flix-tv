@@ -691,15 +691,13 @@ class MediaScraperDataSource @Inject constructor(
         return@withContext if (HiAnimeProvider.isAnime(item)) {
             hiAnimeProvider.resolveStream(item, episodeNumber, "sub").streamUrl
         } else {
-            flexeoProvider.resolveStreamUrl(
-                tmdbId = item.tmdbId,
-                season = seasonNumber,
-                episode = episodeNumber,
-                isTvShow = item.category == "TV Show",
-                fallbackEmbed = item.embedUrl
-            )
+            flexeoProvider.resolveStream(item, seasonNumber, episodeNumber).streamUrl
         }
     }
+
+    /** Full playback source (stream + referer) for a movie or TV episode from Flexeo. */
+    suspend fun resolveMovieSource(item: MediaItem, season: Int, episode: Int): StreamSource =
+        flexeoProvider.resolveStream(item, season, episode)
 
     /** Real episode list for an anime title (empty if the site doesn't know it). */
     suspend fun fetchAnimeEpisodes(item: MediaItem): List<EpisodeItem> = hiAnimeProvider.getEpisodes(item)

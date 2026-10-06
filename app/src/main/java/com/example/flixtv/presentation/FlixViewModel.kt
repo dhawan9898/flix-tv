@@ -96,6 +96,16 @@ class FlixViewModel @Inject constructor(
         return resolved.ifBlank { item.streamUrl ?: item.embedUrl ?: "" }
     }
 
+    /** Stream + referer for a movie or TV episode, or the failure. */
+    suspend fun resolveMovieSource(item: MediaItem, season: Int, episode: Int): Result<StreamSource> =
+        try {
+            Result.success(repository.resolveMovieSource(item, season, episode))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
     /** Real episode list for an anime title (empty when the site doesn't know it). */
     suspend fun loadAnimeEpisodes(item: MediaItem): List<EpisodeItem> = repository.getAnimeEpisodes(item)
 

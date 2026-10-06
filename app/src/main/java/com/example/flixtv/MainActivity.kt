@@ -37,6 +37,7 @@ import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import com.example.flixtv.presentation.FlixViewModel
 import com.example.flixtv.presentation.components.AnimePlayerScreen
+import com.example.flixtv.presentation.components.ResolvedPlayerScreen
 import com.example.flixtv.presentation.components.VideoPlayerScreen
 import com.example.flixtv.presentation.screens.HomeScreen
 import com.example.flixtv.presentation.screens.MediaDetailScreen
@@ -55,6 +56,12 @@ private data class AnimePlayerRoute(
     val item: MediaItem,
     val episodes: List<EpisodeItem>,
     val episodeNumber: Int
+)
+private data class StreamPlayerRoute(
+    val item: MediaItem,
+    val title: String,
+    val season: Int,
+    val episode: Int
 )
 private data class PlayerRoute(
     val streamUrl: String,
@@ -160,7 +167,17 @@ class MainActivity : ComponentActivity() {
                                         loadAnimeEpisodes = { viewModel.loadAnimeEpisodes(it) },
                                         onPlayAnimeEpisode = { item, episodes, number ->
                                             backStack.add(AnimePlayerRoute(item, episodes, number))
+                                        },
+                                        onPlayResolved = { item, title, season, episode ->
+                                            backStack.add(StreamPlayerRoute(item, title, season, episode))
                                         }
+                                    )
+                                }
+                                is StreamPlayerRoute -> NavEntry(key) {
+                                    ResolvedPlayerScreen(
+                                        title = key.title,
+                                        resolveSource = { viewModel.resolveMovieSource(key.item, key.season, key.episode) },
+                                        onBackClick = { backStack.removeLastOrNull() }
                                     )
                                 }
                                 is AnimePlayerRoute -> NavEntry(key) {

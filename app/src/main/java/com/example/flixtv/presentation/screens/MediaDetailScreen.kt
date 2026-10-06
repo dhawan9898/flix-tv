@@ -43,7 +43,8 @@ fun MediaDetailScreen(
     onBackClick: () -> Unit,
     onPlayClick: (streamUrl: String, title: String, embedUrl: String?) -> Unit,
     loadAnimeEpisodes: suspend (MediaItem) -> List<EpisodeItem> = { emptyList() },
-    onPlayAnimeEpisode: (item: MediaItem, episodes: List<EpisodeItem>, episodeNumber: Int) -> Unit = { _, _, _ -> }
+    onPlayAnimeEpisode: (item: MediaItem, episodes: List<EpisodeItem>, episodeNumber: Int) -> Unit = { _, _, _ -> },
+    onPlayResolved: (item: MediaItem, title: String, season: Int, episode: Int) -> Unit = { _, _, _, _ -> }
 ) {
     var isExpandedSynopsis by remember { mutableStateOf(false) }
     var isInWatchlist by remember { mutableStateOf(false) }
@@ -313,6 +314,13 @@ fun MediaDetailScreen(
                             ) {
                                 if (isAnime) {
                                     firstEp?.let { onPlayAnimeEpisode(mediaItem, episodes, it.episodeNumber) }
+                                } else if (mediaItem.tmdbId != null) {
+                                    onPlayResolved(
+                                        mediaItem,
+                                        if (isSeries) "${mediaItem.title} - S${firstEp?.seasonNumber ?: 1}:E${firstEp?.episodeNumber ?: 1}" else mediaItem.title,
+                                        firstEp?.seasonNumber ?: 1,
+                                        firstEp?.episodeNumber ?: 1
+                                    )
                                 } else {
                                     onPlayClick(
                                         defaultStream,
@@ -496,6 +504,13 @@ fun MediaDetailScreen(
                                 onEpisodeClick = {
                                     if (isAnime) {
                                         onPlayAnimeEpisode(mediaItem, episodes, episode.episodeNumber)
+                                    } else if (mediaItem.tmdbId != null) {
+                                        onPlayResolved(
+                                            mediaItem,
+                                            "${mediaItem.title} - ${episode.title}",
+                                            episode.seasonNumber,
+                                            episode.episodeNumber
+                                        )
                                     } else {
                                         onPlayClick(
                                             episode.streamUrl ?: defaultStream,

@@ -96,6 +96,10 @@ class MediaRepository @Inject constructor(
         return@withContext scraperDataSource.resolveStreamForMedia(item, seasonNumber, episodeNumber)
     }
 
+    /** Resolves stream + referer for a movie or TV episode from Flexeo. */
+    suspend fun resolveMovieSource(item: MediaItem, season: Int, episode: Int): StreamSource =
+        scraperDataSource.resolveMovieSource(item, season, episode)
+
     /** Real episode list for an anime title from the provider site. */
     suspend fun getAnimeEpisodes(item: MediaItem): List<EpisodeItem> = withContext(Dispatchers.IO) {
         scraperDataSource.fetchAnimeEpisodes(item)
