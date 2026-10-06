@@ -26,7 +26,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Run Linting and Unit Tests
-        run: ./gradlew testReleaseUnitTest lintRelease
+        run: ./gradlew testDebugUnitTest lintRelease
 
       - name: Generate Version Information
         id: versioning
