@@ -23,7 +23,6 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.lifecycle.compose.dropUnlessResumed
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.ui.NavDisplay
 import com.example.flixtv.domain.models.MediaItem
@@ -139,7 +138,7 @@ class MainActivity : ComponentActivity() {
                                 is HomeRoute -> NavEntry(key) {
                                     HomeScreen(
                                         mediaItems = mediaItems,
-                                        onMediaClick = dropUnlessResumed { mediaItem ->
+                                        onMediaClick = { mediaItem ->
                                             backStack.add(DetailRoute(mediaItem))
                                         }
                                     )
@@ -147,7 +146,7 @@ class MainActivity : ComponentActivity() {
                                 is SearchRoute -> NavEntry(key) {
                                     SearchScreen(
                                         mediaItems = mediaItems,
-                                        onMediaClick = dropUnlessResumed { mediaItem ->
+                                        onMediaClick = { mediaItem ->
                                             backStack.add(DetailRoute(mediaItem))
                                         }
                                     )
@@ -158,7 +157,7 @@ class MainActivity : ComponentActivity() {
                                 is DetailRoute -> NavEntry(key) {
                                     MediaDetailScreen(
                                         mediaItem = key.mediaItem,
-                                        onPlayClick = dropUnlessResumed { streamUrl ->
+                                        onPlayClick = { streamUrl ->
                                             backStack.add(PlayerRoute(streamUrl))
                                         }
                                     )

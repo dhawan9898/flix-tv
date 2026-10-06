@@ -2,8 +2,8 @@ name: Build and Release Flix TV
 
 on:
   push:
-    branches:
-      - main
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build-and-release:
@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'zulu'
@@ -26,7 +26,7 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Run Linting and Unit Tests
-        run: ./gradlew testReleaseUnitTest lintRelease
+        run: ./gradlew testDebugUnitTest lintRelease
 
       - name: Generate Version Information
         id: versioning
@@ -44,9 +44,11 @@ jobs:
           VERSION_NAME: ${{ env.VERSION_NAME }}
 
       - name: Sign APK (Optional but recommended)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: echo "Signing step skipped for boilerplate. Outputting to app/build/outputs/apk/release/"
 
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ env.VERSION_NAME }}
