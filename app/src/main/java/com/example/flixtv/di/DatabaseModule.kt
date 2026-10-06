@@ -22,7 +22,9 @@ object DatabaseModule {
             context,
             FlixDatabase::class.java,
             "flix_db"
-        ).build()
+        )
+        .fallbackToDestructiveMigration(dropAllTables = true)
+        .build()
     }
 
     @Provides

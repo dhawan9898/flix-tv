@@ -5,24 +5,33 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.*
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.ui.NavDisplay
 import com.example.flixtv.domain.models.MediaItem
@@ -33,11 +42,13 @@ import com.example.flixtv.presentation.screens.MediaDetailScreen
 import com.example.flixtv.presentation.screens.SearchScreen
 import com.example.flixtv.presentation.screens.SettingsScreen
 import com.example.flixtv.theme.FlixTVTheme
+import com.example.flixtv.theme.PrimaryAzure
 import dagger.hilt.android.AndroidEntryPoint
 
-// Define our routes as data objects / classes for Navigation 3
+// Navigation 3 routes
 private data object HomeRoute
 private data object SearchRoute
+private data object AnimeRoute
 private data object SettingsRoute
 private data class DetailRoute(val mediaItem: MediaItem)
 private data class PlayerRoute(val streamUrl: String)
@@ -52,103 +63,73 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             FlixTVTheme {
-                // Navigation 3 Backstack Management
                 val backStack = remember { mutableStateListOf<Any>(HomeRoute) }
-                
-                // Collect Media state from Repository (via ViewModel)
-                val mediaItems by viewModel.mediaItems.collectAsState()
 
-                // Determine if we should show the bottom bar based on current route
+                // State collection from ViewModel
+                val mediaItems by viewModel.filteredMediaItems.collectAsState()
+                val allMedia by viewModel.mediaItems.collectAsState()
+                val featuredItems by viewModel.featuredItems.collectAsState()
+                val selectedCategory by viewModel.selectedCategory.collectAsState()
+                val isLoading by viewModel.isLoading.collectAsState()
+
+                val searchQuery by viewModel.searchQuery.collectAsState()
+                val searchResults by viewModel.searchResults.collectAsState()
+                val isSearching by viewModel.isSearching.collectAsState()
+
                 val currentRoute = backStack.lastOrNull()
-                val showBottomBar = currentRoute is HomeRoute || currentRoute is SearchRoute || currentRoute is SettingsRoute
+                val showBottomBar = currentRoute is HomeRoute || currentRoute is SearchRoute ||
+                        currentRoute is AnimeRoute || currentRoute is SettingsRoute
 
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = Color(0xFF0A0A0A),
-                    bottomBar = {
-                        if (showBottomBar) {
-                            NavigationBar(
-                                containerColor = Color(0xFF0A0A0A).copy(alpha = 0.95f),
-                                contentColor = Color.White
-                            ) {
-                                NavigationBarItem(
-                                    selected = currentRoute is HomeRoute,
-                                    onClick = { 
-                                        if (currentRoute !is HomeRoute) {
-                                            backStack.clear()
-                                            backStack.add(HomeRoute)
-                                        }
-                                    },
-                                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                                    label = { Text("Home") },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Color(0xFFE50914),
-                                        selectedTextColor = Color(0xFFE50914),
-                                        unselectedIconColor = Color.Gray,
-                                        unselectedTextColor = Color.Gray,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                                NavigationBarItem(
-                                    selected = currentRoute is SearchRoute,
-                                    onClick = { 
-                                        if (currentRoute !is SearchRoute) {
-                                            backStack.clear()
-                                            backStack.add(SearchRoute)
-                                        }
-                                    },
-                                    icon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                                    label = { Text("Search") },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Color(0xFFE50914),
-                                        selectedTextColor = Color(0xFFE50914),
-                                        unselectedIconColor = Color.Gray,
-                                        unselectedTextColor = Color.Gray,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                                NavigationBarItem(
-                                    selected = currentRoute is SettingsRoute,
-                                    onClick = { 
-                                        if (currentRoute !is SettingsRoute) {
-                                            backStack.clear()
-                                            backStack.add(SettingsRoute)
-                                        }
-                                    },
-                                    icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
-                                    label = { Text("Settings") },
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = Color(0xFFE50914),
-                                        selectedTextColor = Color(0xFFE50914),
-                                        unselectedIconColor = Color.Gray,
-                                        unselectedTextColor = Color.Gray,
-                                        indicatorColor = Color.Transparent
-                                    )
-                                )
-                            }
-                        }
-                    }
-                ) { innerPadding ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF08080C))
+                ) {
+                    // Main Nav Display
                     NavDisplay(
                         backStack = backStack,
-                        modifier = Modifier.padding(innerPadding),
+                        modifier = Modifier.fillMaxSize(),
                         onBack = { backStack.removeLastOrNull() },
                         entryProvider = { key ->
                             when (key) {
                                 is HomeRoute -> NavEntry(key) {
                                     HomeScreen(
                                         mediaItems = mediaItems,
-                                        onMediaClick = { mediaItem ->
-                                            backStack.add(DetailRoute(mediaItem))
-                                        }
+                                        featuredItems = featuredItems,
+                                        selectedCategory = selectedCategory,
+                                        isLoading = isLoading,
+                                        onCategorySelected = { viewModel.setCategory(it) },
+                                        onMediaClick = { backStack.add(DetailRoute(it)) },
+                                        onPlayClick = { backStack.add(PlayerRoute(it)) }
                                     )
                                 }
                                 is SearchRoute -> NavEntry(key) {
                                     SearchScreen(
-                                        mediaItems = mediaItems,
-                                        onMediaClick = { mediaItem ->
-                                            backStack.add(DetailRoute(mediaItem))
-                                        }
+                                        searchQuery = searchQuery,
+                                        searchResults = searchResults,
+                                        isSearching = isSearching,
+                                        allMedia = allMedia,
+                                        onQueryChanged = { viewModel.onSearchQueryChanged(it) },
+                                        onMediaClick = { backStack.add(DetailRoute(it)) }
+                                    )
+                                }
+                                is AnimeRoute -> NavEntry(key) {
+                                    // Direct Anime Discovery Section
+                                    val animeItems = allMedia.filter { it.category == "Anime" }
+                                    HomeScreen(
+                                        mediaItems = animeItems,
+                                        featuredItems = featuredItems.filter { it.category == "Anime" },
+                                        selectedCategory = "Anime",
+                                        isLoading = isLoading,
+                                        onCategorySelected = { cat ->
+                                            if (cat != "Anime") {
+                                                viewModel.setCategory(cat)
+                                                backStack.clear()
+                                                backStack.add(HomeRoute)
+                                            }
+                                        },
+                                        onMediaClick = { backStack.add(DetailRoute(it)) },
+                                        onPlayClick = { backStack.add(PlayerRoute(it)) }
                                     )
                                 }
                                 is SettingsRoute -> NavEntry(key) {
@@ -157,6 +138,7 @@ class MainActivity : ComponentActivity() {
                                 is DetailRoute -> NavEntry(key) {
                                     MediaDetailScreen(
                                         mediaItem = key.mediaItem,
+                                        onBackClick = { backStack.removeLastOrNull() },
                                         onPlayClick = { streamUrl ->
                                             backStack.add(PlayerRoute(streamUrl))
                                         }
@@ -169,7 +151,146 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     )
+
+                    // visionOS Floating Capsule Dock Navigation
+                    if (showBottomBar) {
+                        VisionOsFloatingDock(
+                            currentRoute = currentRoute,
+                            onTabSelected = { route ->
+                                backStack.clear()
+                                backStack.add(route)
+                            },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 24.dp)
+                        )
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VisionOsFloatingDock(
+    currentRoute: Any?,
+    onTabSelected: (Any) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val dockShape = RoundedCornerShape(9999.dp)
+
+    Box(
+        modifier = modifier
+            .navigationBarsPadding()
+            .clip(dockShape)
+            .background(Color(0xFF0F111A).copy(alpha = 0.82f))
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(alpha = 0.22f),
+                shape = dockShape
+            )
+            .shadow(
+                elevation = 28.dp,
+                shape = dockShape,
+                ambientColor = Color.Black.copy(alpha = 0.85f),
+                spotColor = Color.Black.copy(alpha = 0.85f)
+            )
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            VisionOsDockTab(
+                icon = Icons.Default.Home,
+                label = "Home",
+                isSelected = currentRoute is HomeRoute,
+                onClick = { onTabSelected(HomeRoute) }
+            )
+
+            VisionOsDockTab(
+                icon = Icons.Default.Search,
+                label = "Search",
+                isSelected = currentRoute is SearchRoute,
+                onClick = { onTabSelected(SearchRoute) }
+            )
+
+            VisionOsDockTab(
+                icon = Icons.Default.Tv,
+                label = "Anime",
+                isSelected = currentRoute is AnimeRoute,
+                onClick = { onTabSelected(AnimeRoute) }
+            )
+
+            VisionOsDockTab(
+                icon = Icons.Default.Settings,
+                label = "Settings",
+                isSelected = currentRoute is SettingsRoute,
+                onClick = { onTabSelected(SettingsRoute) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun VisionOsDockTab(
+    icon: ImageVector,
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale = if (isPressed) 0.92f else 1.0f
+
+    val tabShape = RoundedCornerShape(9999.dp)
+
+    Box(
+        modifier = Modifier
+            .scale(scale)
+            .clip(tabShape)
+            .background(
+                if (isSelected) Color.White.copy(alpha = 0.20f)
+                else Color.Transparent
+            )
+            .border(
+                width = if (isSelected) 1.dp else 0.dp,
+                color = if (isSelected) Color.White.copy(alpha = 0.28f) else Color.Transparent,
+                shape = tabShape
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null
+            ) { onClick() }
+            .padding(
+                horizontal = if (isSelected) 16.dp else 10.dp,
+                vertical = 8.dp
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.55f),
+                modifier = Modifier.size(20.dp)
+            )
+
+            AnimatedVisibility(
+                visible = isSelected,
+                enter = fadeIn() + expandHorizontally(animationSpec = spring(stiffness = 500f)),
+                exit = fadeOut() + shrinkHorizontally(animationSpec = spring(stiffness = 500f))
+            ) {
+                Text(
+                    text = label,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.01.sp
+                )
             }
         }
     }
