@@ -33,6 +33,7 @@ import coil.compose.AsyncImage
 import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import com.example.flixtv.presentation.components.FrostedOrbButton
+import com.example.flixtv.data.remote.providers.HiAnimeProvider
 import com.example.flixtv.theme.PrimaryAzure
 import com.example.flixtv.theme.SecondaryIceCyan
 
@@ -40,12 +41,24 @@ import com.example.flixtv.theme.SecondaryIceCyan
 fun MediaDetailScreen(
     mediaItem: MediaItem,
     onBackClick: () -> Unit,
-    onPlayClick: (streamUrl: String, title: String, embedUrl: String?) -> Unit
+    onPlayClick: (streamUrl: String, title: String, embedUrl: String?) -> Unit,
+    loadAnimeEpisodes: suspend (MediaItem) -> List<EpisodeItem> = { emptyList() },
+    onPlayAnimeEpisode: (item: MediaItem, episodes: List<EpisodeItem>, episodeNumber: Int) -> Unit = { _, _, _ -> }
 ) {
     var isExpandedSynopsis by remember { mutableStateOf(false) }
     var isInWatchlist by remember { mutableStateOf(false) }
     val isSeries = mediaItem.category == "TV Show" || mediaItem.category == "Anime"
-    val firstEp = mediaItem.episodes.firstOrNull()
+
+    // Anime streams are resolved per episode from the provider site, so the episode list comes
+    // from there too (null while loading) rather than from the cached placeholders.
+    val isAnime = HiAnimeProvider.isAnime(mediaItem)
+    var animeEpisodes by remember(mediaItem.id) { mutableStateOf<List<EpisodeItem>?>(null) }
+    if (isAnime) {
+        LaunchedEffect(mediaItem.id) { animeEpisodes = loadAnimeEpisodes(mediaItem) }
+    }
+    val episodes = if (isAnime) animeEpisodes.orEmpty() else mediaItem.episodes
+    val episodesLoading = isAnime && animeEpisodes == null
+    val firstEp = episodes.firstOrNull()
     val defaultStream = firstEp?.streamUrl ?: mediaItem.streamUrl ?: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
     val defaultEmbed = firstEp?.embedUrl ?: mediaItem.embedUrl
 
@@ -298,11 +311,15 @@ fun MediaDetailScreen(
                                 interactionSource = playInteractionSource,
                                 indication = null
                             ) {
-                                onPlayClick(
-                                    defaultStream,
-                                    if (isSeries) "${mediaItem.title} - S1:E1" else mediaItem.title,
-                                    defaultEmbed
-                                )
+                                if (isAnime) {
+                                    firstEp?.let { onPlayAnimeEpisode(mediaItem, episodes, it.episodeNumber) }
+                                } else {
+                                    onPlayClick(
+                                        defaultStream,
+                                        if (isSeries) "${mediaItem.title} - S1:E1" else mediaItem.title,
+                                        defaultEmbed
+                                    )
+                                }
                             },
                         contentAlignment = Alignment.Center
                     ) {
@@ -317,7 +334,13 @@ fun MediaDetailScreen(
                                 modifier = Modifier.size(26.dp)
                             )
                             Text(
-                                text = if (isSeries) "Play S1:E1" else "Play Movie",
+                                text = when {
+                                    episodesLoading -> "Loading episodes..."
+                                    isAnime && firstEp == null -> "No episodes found"
+                                    isAnime -> "Play E${firstEp!!.episodeNumber}"
+                                    isSeries -> "Play S1:E1"
+                                    else -> "Play Movie"
+                                },
                                 color = Color.White,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold
@@ -332,18 +355,20 @@ fun MediaDetailScreen(
                         onClick = { isInWatchlist = !isInWatchlist }
                     )
 
-                    // Web Stream Direct Button
-                    FrostedOrbButton(
-                        icon = Icons.Default.Language,
-                        contentDescription = "Web Stream",
-                        onClick = {
-                            onPlayClick(
-                                defaultStream,
-                                mediaItem.title,
-                                defaultEmbed
-                            )
-                        }
-                    )
+                    // Web Stream Direct Button (anime plays through the native resolver instead)
+                    if (!isAnime) {
+                        FrostedOrbButton(
+                            icon = Icons.Default.Language,
+                            contentDescription = "Web Stream",
+                            onClick = {
+                                onPlayClick(
+                                    defaultStream,
+                                    mediaItem.title,
+                                    defaultEmbed
+                                )
+                            }
+                        )
+                    }
                 }
 
                 // Expandable Acrylic Synopsis Panel
@@ -410,7 +435,7 @@ fun MediaDetailScreen(
                 }
 
                 // TV Shows & Anime: Episodes List Section
-                if (isSeries && mediaItem.episodes.isNotEmpty()) {
+                if (isSeries && episodes.isNotEmpty()) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -439,7 +464,7 @@ fun MediaDetailScreen(
                                         .padding(horizontal = 8.dp, vertical = 2.dp)
                                 ) {
                                     Text(
-                                        text = "${mediaItem.episodes.size} Episodes",
+                                        text = "${episodes.size} Episodes",
                                         color = SecondaryIceCyan,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -464,16 +489,20 @@ fun MediaDetailScreen(
                         }
 
                         // Episode Cards List
-                        mediaItem.episodes.forEach { episode ->
+                        episodes.forEach { episode ->
                             EpisodeCard(
                                 episode = episode,
                                 backdropFallback = mediaItem.backdropUrl ?: mediaItem.posterUrl,
                                 onEpisodeClick = {
-                                    onPlayClick(
-                                        episode.streamUrl ?: defaultStream,
-                                        "${mediaItem.title} - ${episode.title}",
-                                        episode.embedUrl ?: defaultEmbed
-                                    )
+                                    if (isAnime) {
+                                        onPlayAnimeEpisode(mediaItem, episodes, episode.episodeNumber)
+                                    } else {
+                                        onPlayClick(
+                                            episode.streamUrl ?: defaultStream,
+                                            "${mediaItem.title} - ${episode.title}",
+                                            episode.embedUrl ?: defaultEmbed
+                                        )
+                                    }
                                 }
                             )
                         }

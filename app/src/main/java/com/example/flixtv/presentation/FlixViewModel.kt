@@ -2,9 +2,13 @@ package com.example.flixtv.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.flixtv.data.remote.AniSkipClient
 import com.example.flixtv.data.repository.MediaRepository
+import com.example.flixtv.domain.models.EpisodeItem
+import com.example.flixtv.domain.models.StreamSource
 import com.example.flixtv.domain.models.MediaItem
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -82,9 +86,31 @@ class FlixViewModel @Inject constructor(
     }
 
     suspend fun resolveStreamUrl(item: MediaItem, season: Int = 1, episode: Int = 1): String {
-        val resolved = repository.resolveStreamUrl(item, season, episode)
+        val resolved = try {
+            repository.resolveStreamUrl(item, season, episode)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ""
+        }
         return resolved.ifBlank { item.streamUrl ?: item.embedUrl ?: "" }
     }
+
+    /** Real episode list for an anime title (empty when the site doesn't know it). */
+    suspend fun loadAnimeEpisodes(item: MediaItem): List<EpisodeItem> = repository.getAnimeEpisodes(item)
+
+    /** Stream + referer + subtitles + skip markers for one anime episode, or the failure. */
+    suspend fun resolveAnimeSource(item: MediaItem, episode: Int, mode: String): Result<StreamSource> =
+        try {
+            Result.success(repository.resolveAnimeSource(item, episode, mode))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+
+    suspend fun skipIntervals(title: String, episode: Int, lengthSeconds: Long): AniSkipClient.Intervals =
+        repository.getSkipIntervals(title, episode, lengthSeconds)
 
     fun onSearchQueryChanged(query: String) {
         _searchQuery.value = query

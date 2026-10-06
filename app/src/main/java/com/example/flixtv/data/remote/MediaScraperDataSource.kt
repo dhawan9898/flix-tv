@@ -5,6 +5,7 @@ import com.example.flixtv.data.remote.providers.FlexeoProvider
 import com.example.flixtv.data.remote.providers.HiAnimeProvider
 import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
+import com.example.flixtv.domain.models.StreamSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -679,16 +680,16 @@ class MediaScraperDataSource @Inject constructor(
     }
 
     /**
-     * Resolves playable video stream URL from Flexeo or HiAnime provider
+     * Resolves playable video stream URL from Flexeo (movies/TV). Anime goes through
+     * [resolveAnimeSource], which also carries referer/subtitles/skip markers.
      */
     suspend fun resolveStreamForMedia(
         item: MediaItem,
         seasonNumber: Int = 1,
         episodeNumber: Int = 1
     ): String = withContext(Dispatchers.IO) {
-        return@withContext if (item.provider == "HiAnime" || item.category == "Anime") {
-            val animeId = item.id.removePrefix("hianime_").removePrefix("anime_")
-            hiAnimeProvider.resolveAnimeStreamUrl(animeId, episodeNumber)
+        return@withContext if (HiAnimeProvider.isAnime(item)) {
+            hiAnimeProvider.resolveStream(item, episodeNumber, "sub").streamUrl
         } else {
             flexeoProvider.resolveStreamUrl(
                 tmdbId = item.tmdbId,
@@ -699,6 +700,13 @@ class MediaScraperDataSource @Inject constructor(
             )
         }
     }
+
+    /** Real episode list for an anime title (empty if the site doesn't know it). */
+    suspend fun fetchAnimeEpisodes(item: MediaItem): List<EpisodeItem> = hiAnimeProvider.getEpisodes(item)
+
+    /** Full playback source (stream + referer + subtitles + skip markers) for an anime episode. */
+    suspend fun resolveAnimeSource(item: MediaItem, episodeNumber: Int, mode: String): StreamSource =
+        hiAnimeProvider.resolveStream(item, episodeNumber, mode)
 
     /**
      * Universal search across Flexeo (Movies & TV) and HiAnime (Anime)

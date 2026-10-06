@@ -8,5 +8,7 @@ data class EpisodeItem(
     val stillUrl: String? = null,
     val duration: String = "45m",
     val streamUrl: String? = null,
-    val embedUrl: String? = null
+    val embedUrl: String? = null,
+    /** Id of the episode on the provider site (anime only), used to look up servers. */
+    val providerEpisodeId: String? = null
 )

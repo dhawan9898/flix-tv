@@ -36,6 +36,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,6 +49,9 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,11 +69,14 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -87,6 +95,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
+import androidx.media3.datasource.HttpDataSource
+import com.example.flixtv.domain.models.SkipRange
+import com.example.flixtv.domain.models.SubtitleTrack
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.TrackSelectionOverride
@@ -96,14 +108,66 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private val NetflixRed = Color(0xFFE50914)
 private const val SEEK_STEP_MS = 10_000L
+private const val NEXT_EPISODE_THRESHOLD_MS = 20_000L
+private const val NEXT_EPISODE_COUNTDOWN_MS = 10_000L
+private const val MAX_AUTO_RETRIES = 3
 private const val FALLBACK_STREAM =
     "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+
+/** One entry of the in-player episode picker. */
+data class PlayerEpisode(val number: Int, val title: String)
+
+/**
+ * Optional extras for sources that bring more than a bare URL (anime): request referer,
+ * external subtitles, opening/ending markers, audio (sub/dub) switch and episode navigation.
+ * With none supplied the player behaves exactly as before.
+ */
+data class PlayerExtras(
+    val referer: String? = null,
+    val subtitles: List<SubtitleTrack> = emptyList(),
+    val intro: SkipRange? = null,
+    val outro: SkipRange? = null,
+    /** "sub" or "dub"; null hides the audio switch. */
+    val audioMode: String? = null,
+    val onToggleAudioMode: (() -> Unit)? = null,
+    /** Non-null only when there is a real next episode. */
+    val onNextEpisode: (() -> Unit)? = null,
+    val episodes: List<PlayerEpisode> = emptyList(),
+    val currentEpisode: Int? = null,
+    val onSelectEpisode: ((Int) -> Unit)? = null,
+    /** Called once per stream with the real duration (ms), e.g. to look up skip markers. */
+    val onDurationKnown: ((Long) -> Unit)? = null
+)
+
+/** Landscape + immersive while on screen, restored on exit. */
+@Composable
+fun LandscapeImmersiveEffect() {
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val activity = context as? Activity
+        val previousOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        controller?.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller?.hide(WindowInsetsCompat.Type.systemBars())
+        onDispose {
+            activity?.window?.attributes = activity?.window?.attributes?.apply {
+                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            activity?.requestedOrientation =
+                previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+}
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(UnstableApi::class)
@@ -112,10 +176,14 @@ fun VideoPlayerScreen(
     streamUrl: String,
     title: String = "Now Playing",
     embedUrl: String? = null,
-    onBackClick: (() -> Unit)? = null
+    onBackClick: (() -> Unit)? = null,
+    extras: PlayerExtras? = null,
+    /** False when a parent already owns orientation/immersive mode (e.g. across episode switches). */
+    manageWindow: Boolean = true
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val currentExtras by rememberUpdatedState(extras)
 
     val isDirectVideo = streamUrl.endsWith(".mp4", ignoreCase = true) ||
                         streamUrl.endsWith(".m3u8", ignoreCase = true) ||
@@ -143,6 +211,15 @@ fun VideoPlayerScreen(
     var isLocked by remember { mutableStateOf(false) }
     var showTracksDialog by remember { mutableStateOf(false) }
     var tracks by remember { mutableStateOf(Tracks.EMPTY) }
+    var showEpisodesDialog by remember { mutableStateOf(false) }
+    var errorDetail by remember(streamUrl) { mutableStateOf<String?>(null) }
+    var autoRetries by remember(streamUrl) { mutableIntStateOf(0) }
+    var retryRequest by remember(streamUrl) { mutableIntStateOf(0) }
+    var hasEnded by remember(streamUrl) { mutableStateOf(false) }
+    var nextTriggered by remember(streamUrl) { mutableStateOf(false) }
+    var postPlayDismissed by remember(streamUrl) { mutableStateOf(false) }
+    var postPlayStartMs by remember(streamUrl) { mutableLongStateOf(-1L) }
+    var durationReported by remember(streamUrl) { mutableStateOf(false) }
 
     val audioManager = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
@@ -167,24 +244,7 @@ fun VideoPlayerScreen(
         }
     }
 
-    // Landscape + immersive while the player is on screen, restored on exit.
-    DisposableEffect(Unit) {
-        val activity = context as? Activity
-        val previousOrientation = activity?.requestedOrientation
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
-        controller?.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        controller?.hide(WindowInsetsCompat.Type.systemBars())
-        onDispose {
-            activity?.window?.attributes = activity?.window?.attributes?.apply {
-                screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            }
-            controller?.show(WindowInsetsCompat.Type.systemBars())
-            activity?.requestedOrientation =
-                previousOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
+    if (manageWindow) LandscapeImmersiveEffect()
 
     val exoPlayer = remember(resolvedNativeStream) {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
@@ -192,21 +252,40 @@ fun VideoPlayerScreen(
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)
             .setAllowCrossProtocolRedirects(true)
+            .apply {
+                // CDNs of the anime sources reject requests without the embed site as referer.
+                currentExtras?.referer?.takeIf { it.isNotBlank() }?.let {
+                    setDefaultRequestProperties(mapOf("Referer" to it))
+                }
+            }
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(context).setDataSourceFactory(httpDataSourceFactory)
+                DefaultMediaSourceFactory(context)
+                    .setDataSourceFactory(httpDataSourceFactory)
+                    .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6))
             )
             .build().apply {
-                setMediaItem(MediaItem.fromUri(resolvedNativeStream))
+                setMediaItem(buildMediaItem(resolvedNativeStream, currentExtras))
                 prepare()
                 // Never start audio behind the web player.
                 playWhenReady = !useWebPlayer
+                // Dub servers list the subbed release's captions, timed to the Japanese dialogue:
+                // start with subtitles off (still selectable from Audio & Subtitles).
+                if (currentExtras?.audioMode == "dub") {
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+                }
 
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
                         isBuffering = state == Player.STATE_BUFFERING
-                        if (state == Player.STATE_READY) hasPlaybackError = false
+                        if (state == Player.STATE_READY) {
+                            hasPlaybackError = false
+                            autoRetries = 0
+                        }
+                        if (state == Player.STATE_ENDED) hasEnded = true
                     }
 
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -218,11 +297,31 @@ fun VideoPlayerScreen(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
-                        isBuffering = false
-                        hasPlaybackError = true
+                        errorDetail = describeError(error)
+                        if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
+                            // Flaky CDNs: quietly retry from where we were before bothering the viewer.
+                            autoRetries++
+                            isBuffering = true
+                            retryRequest++
+                        } else {
+                            isBuffering = false
+                            hasPlaybackError = true
+                        }
                     }
                 })
             }
+    }
+
+    // Anime streams carry the real duration only once prepared: hand it over once per stream.
+    LaunchedEffect(exoPlayer) {
+        while (!durationReported) {
+            val d = exoPlayer.duration
+            if (d != C.TIME_UNSET && d > 0) {
+                durationReported = true
+                currentExtras?.onDurationKnown?.invoke(d)
+            }
+            delay(500)
+        }
     }
 
     LaunchedEffect(showHud, isPlaying, isScrubbing, hasPlaybackError, useWebPlayer) {
@@ -280,15 +379,55 @@ fun VideoPlayerScreen(
     fun retryNative() {
         hasPlaybackError = false
         isBuffering = true
-        exoPlayer.setMediaItem(MediaItem.fromUri(resolvedNativeStream), currentPosition)
+        exoPlayer.setMediaItem(buildMediaItem(resolvedNativeStream, currentExtras), currentPosition)
         exoPlayer.prepare()
         exoPlayer.play()
+    }
+
+    LaunchedEffect(retryRequest) {
+        if (retryRequest > 0) {
+            delay(1500L * retryRequest)
+            retryNative()
+        }
+    }
+
+    // ---- skip intro / outro and post-play "next episode" (position driven, so pausing pauses it)
+    val inIntro = extras?.intro?.let { currentPosition >= it.startMs && currentPosition < it.endMs } == true
+    val inOutro = extras?.outro?.let { currentPosition >= it.startMs && currentPosition < it.endMs } == true
+    val hasNext = extras?.onNextEpisode != null
+    val nearEnd = totalDuration > 1 && totalDuration - currentPosition <= NEXT_EPISODE_THRESHOLD_MS
+    val wantPostPlay = hasNext && !useWebPlayer && !nextTriggered && !postPlayDismissed && !hasPlaybackError &&
+        (inOutro || nearEnd || hasEnded)
+    val postPlayProgress = if (wantPostPlay && postPlayStartMs >= 0) {
+        ((currentPosition - postPlayStartMs) / NEXT_EPISODE_COUNTDOWN_MS.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+
+    LaunchedEffect(wantPostPlay) {
+        postPlayStartMs = if (wantPostPlay) exoPlayer.currentPosition else -1L
+    }
+    LaunchedEffect(wantPostPlay, postPlayProgress >= 1f, hasEnded) {
+        if (wantPostPlay && (postPlayProgress >= 1f || hasEnded)) {
+            nextTriggered = true
+            currentExtras?.onNextEpisode?.invoke()
+        }
     }
 
     BackHandler(enabled = onBackClick != null) { onBackClick?.invoke() }
 
     if (showTracksDialog) {
         TracksDialog(tracks = tracks, player = exoPlayer, onDismiss = { showTracksDialog = false })
+    }
+
+    if (showEpisodesDialog && extras != null) {
+        EpisodesDialog(
+            episodes = extras.episodes,
+            current = extras.currentEpisode,
+            onSelect = {
+                showEpisodesDialog = false
+                extras.onSelectEpisode?.invoke(it)
+            },
+            onDismiss = { showEpisodesDialog = false }
+        )
     }
 
     Box(
@@ -427,7 +566,7 @@ fun VideoPlayerScreen(
                 message = if (useWebPlayer) {
                     "This source couldn't be loaded. Check your connection and try again."
                 } else {
-                    "We're having trouble playing this title."
+                    "We're having trouble playing this title." + (errorDetail?.let { "\n$it" } ?: "")
                 },
                 onRetry = {
                     if (useWebPlayer) {
@@ -446,6 +585,35 @@ fun VideoPlayerScreen(
                 } else null,
                 onExit = { onBackClick?.invoke() }
             )
+        }
+
+        if (!useWebPlayer && !hasPlaybackError) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 24.dp, bottom = if (showHud && !isLocked) 110.dp else 32.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (inIntro) {
+                    PillButton("Skip Intro", Icons.Default.SkipNext) { extras?.intro?.let { exoPlayer.seekTo(it.endMs) } }
+                }
+                if (inOutro && !hasNext) {
+                    PillButton("Skip Outro", Icons.Default.SkipNext) { extras?.outro?.let { exoPlayer.seekTo(it.endMs) } }
+                }
+                if (wantPostPlay) {
+                    NextEpisodePill(
+                        progress = postPlayProgress,
+                        onNow = {
+                            nextTriggered = true
+                            currentExtras?.onNextEpisode?.invoke()
+                        }
+                    )
+                    if (!inOutro && !hasEnded) {
+                        PillButton("Watch Credits", null) { postPlayDismissed = true }
+                    }
+                }
+            }
         }
 
         if (useWebPlayer) {
@@ -510,6 +678,11 @@ fun VideoPlayerScreen(
                         showHud = false
                     },
                     onAudioSubtitles = { showTracksDialog = true },
+                    audioMode = extras?.audioMode,
+                    onToggleAudioMode = extras?.onToggleAudioMode,
+                    onEpisodes = if (extras != null && extras.episodes.isNotEmpty()) {
+                        { showEpisodesDialog = true }
+                    } else null,
                     onCycleSpeed = {
                         playbackSpeed = when (playbackSpeed) {
                             1.0f -> 1.25f
@@ -540,6 +713,9 @@ private fun NetflixControls(
     onScrubFinished: () -> Unit,
     onLock: () -> Unit,
     onAudioSubtitles: () -> Unit,
+    audioMode: String?,
+    onToggleAudioMode: (() -> Unit)?,
+    onEpisodes: (() -> Unit)?,
     onCycleSpeed: () -> Unit
 ) {
     val fraction = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
@@ -629,6 +805,12 @@ private fun NetflixControls(
                     onCycleSpeed
                 )
                 ControlLabel(Icons.Default.Subtitles, "Audio & Subtitles", onAudioSubtitles)
+                if (audioMode != null && onToggleAudioMode != null) {
+                    ControlLabel(Icons.Default.Translate, "Audio: ${audioMode.uppercase()}", onToggleAudioMode)
+                }
+                if (onEpisodes != null) {
+                    ControlLabel(Icons.Default.VideoLibrary, "Episodes", onEpisodes)
+                }
                 ControlLabel(Icons.Default.Lock, "Lock", onLock)
             }
         }
@@ -779,6 +961,134 @@ private fun HudIconButton(
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, contentDescription, tint = Color.White, modifier = Modifier.size(size * 0.8f))
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun buildMediaItem(url: String, extras: PlayerExtras?): MediaItem {
+    val builder = MediaItem.Builder().setUri(url)
+    if (extras != null) {
+        // Proxied/redirected anime URLs often lack a literal .m3u8 extension.
+        if (!url.substringBefore('?').endsWith(".mp4", ignoreCase = true)) {
+            builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+        }
+        val configs = ArrayList<MediaItem.SubtitleConfiguration>()
+        val labels = HashSet<String>()
+        extras.subtitles.forEachIndexed { i, track ->
+            var label = track.label
+            while (!labels.add(label)) label += " (2)"
+            configs.add(
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(track.src))
+                    .setMimeType(subtitleMimeType(track.src))
+                    .setLanguage(label.lowercase())
+                    .setLabel(label)
+                    .setId(label)
+                    .setSelectionFlags(if (track.isDefault || (i == 0 && extras.subtitles.none { it.isDefault })) C.SELECTION_FLAG_DEFAULT else 0)
+                    .build()
+            )
+        }
+        if (configs.isNotEmpty()) builder.setSubtitleConfigurations(configs)
+    }
+    return builder.build()
+}
+
+// Infer the real format from the extension: parsing SRT/ASS as WebVTT silently yields zero cues.
+private fun subtitleMimeType(url: String): String {
+    val path = url.lowercase().substringBefore('?')
+    return when {
+        path.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
+        path.endsWith(".ssa") || path.endsWith(".ass") -> MimeTypes.TEXT_SSA
+        path.endsWith(".ttml") || path.endsWith(".dfxp") || path.endsWith(".xml") -> MimeTypes.APPLICATION_TTML
+        else -> MimeTypes.TEXT_VTT
+    }
+}
+
+@OptIn(UnstableApi::class)
+private fun httpStatusOf(error: PlaybackException): Int? =
+    (error.cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode
+
+@OptIn(UnstableApi::class)
+private fun isTransient(error: PlaybackException): Boolean {
+    val status = httpStatusOf(error)
+    return when {
+        status != null -> status == 408 || status == 429 || status >= 500
+        else -> error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+            error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW
+    }
+}
+
+// Surfaces the real cause (CDN status code or exception) instead of one generic message.
+@OptIn(UnstableApi::class)
+private fun describeError(error: PlaybackException): String =
+    httpStatusOf(error)?.let { "The server rejected the request (HTTP $it)." }
+        ?: "${error.errorCodeName}${error.cause?.message?.let { ": $it" } ?: ""}"
+
+@Composable
+private fun PillButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector?,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.Black.copy(alpha = 0.65f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (icon != null) Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+        Text(label, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Netflix post-play: white fill grows over the countdown, then the next episode starts. */
+@Composable
+private fun NextEpisodePill(progress: Float, onNow: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.Black.copy(alpha = 0.65f))
+            .drawBehind {
+                drawRect(Color.White.copy(alpha = 0.35f), size = Size(size.width * progress, size.height))
+            }
+            .clickable(onClick = onNow)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+            Text("Next Episode", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun EpisodesDialog(
+    episodes: List<PlayerEpisode>,
+    current: Int?,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF181818))
+                .padding(24.dp)
+        ) {
+            Text("Episodes", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            LazyColumn(modifier = Modifier.height(280.dp)) {
+                items(episodes, key = { it.number }) { ep ->
+                    TrackRow("${ep.number}. ${ep.title}", ep.number == current) { onSelect(ep.number) }
+                }
+            }
+        }
     }
 }
 

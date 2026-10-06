@@ -4,7 +4,10 @@ import android.util.Log
 import com.example.flixtv.data.local.MediaDao
 import com.example.flixtv.data.local.toDomain
 import com.example.flixtv.data.local.toEntity
+import com.example.flixtv.data.remote.AniSkipClient
 import com.example.flixtv.data.remote.MediaScraperDataSource
+import com.example.flixtv.domain.models.EpisodeItem
+import com.example.flixtv.domain.models.StreamSource
 import com.example.flixtv.domain.models.MediaItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -18,7 +21,8 @@ import javax.inject.Singleton
 @Singleton
 class MediaRepository @Inject constructor(
     private val mediaDao: MediaDao,
-    private val scraperDataSource: MediaScraperDataSource
+    private val scraperDataSource: MediaScraperDataSource,
+    private val aniSkipClient: AniSkipClient
 ) {
     companion object {
         private const val TAG = "MediaRepository"
@@ -91,6 +95,19 @@ class MediaRepository @Inject constructor(
     ): String = withContext(Dispatchers.IO) {
         return@withContext scraperDataSource.resolveStreamForMedia(item, seasonNumber, episodeNumber)
     }
+
+    /** Real episode list for an anime title from the provider site. */
+    suspend fun getAnimeEpisodes(item: MediaItem): List<EpisodeItem> = withContext(Dispatchers.IO) {
+        scraperDataSource.fetchAnimeEpisodes(item)
+    }
+
+    /** Resolves stream + referer + subtitles + skip markers for an anime episode. */
+    suspend fun resolveAnimeSource(item: MediaItem, episodeNumber: Int, mode: String): StreamSource =
+        scraperDataSource.resolveAnimeSource(item, episodeNumber, mode)
+
+    /** Real opening/ending intervals for an episode (fallback when the stream carries none). */
+    suspend fun getSkipIntervals(title: String, episodeNumber: Int, lengthSeconds: Long): AniSkipClient.Intervals =
+        aniSkipClient.getIntervals(title, episodeNumber, lengthSeconds)
 
     /**
      * Fetches movies, TV shows (Flexeo), anime (HiAnime), and charts concurrently, caching into Room
