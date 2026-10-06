@@ -82,7 +82,18 @@ class MediaRepository @Inject constructor(
     }
 
     /**
-     * Fetches movies, TV shows, anime, and charts concurrently, caching into Room
+     * Resolves playable video stream URL for a media item from Flexeo or HiAnime
+     */
+    suspend fun resolveStreamUrl(
+        item: MediaItem,
+        seasonNumber: Int = 1,
+        episodeNumber: Int = 1
+    ): String = withContext(Dispatchers.IO) {
+        return@withContext scraperDataSource.resolveStreamForMedia(item, seasonNumber, episodeNumber)
+    }
+
+    /**
+     * Fetches movies, TV shows (Flexeo), anime (HiAnime), and charts concurrently, caching into Room
      */
     suspend fun refreshAllContent() = coroutineScope {
         try {
@@ -90,25 +101,12 @@ class MediaRepository @Inject constructor(
             val fallbacks = scraperDataSource.getCuratedFallbacks()
             mediaDao.insertAll(fallbacks.map { it.toEntity() })
 
-            // Concurrently fetch TMDB movies/shows, AniList anime, and FlixPatrol charts
-            val tmdbDeferred = async(Dispatchers.IO) { scraperDataSource.fetchTrendingTmdb() }
-            val animeDeferred = async(Dispatchers.IO) { scraperDataSource.fetchTrendingAnime() }
-            val patrolDeferred = async(Dispatchers.IO) {
-                scraperDataSource.scrapeMedia("https://flixpatrol.com/top10/streaming/world/today/")
-            }
-
-            val tmdbResult = tmdbDeferred.await()
-            val animeResult = animeDeferred.await()
-            val patrolResult = patrolDeferred.await()
-
-            val allItems = mutableListOf<MediaItem>()
-            tmdbResult.onSuccess { allItems.addAll(it) }
-            animeResult.onSuccess { allItems.addAll(it) }
-            patrolResult.onSuccess { allItems.addAll(it) }
-
-            if (allItems.isNotEmpty()) {
-                mediaDao.insertAll(allItems.map { it.toEntity() })
-                Log.d(TAG, "Successfully refreshed and cached ${allItems.size} media items")
+            val providersResult = scraperDataSource.fetchAllProviders()
+            providersResult.onSuccess { allItems ->
+                if (allItems.isNotEmpty()) {
+                    mediaDao.insertAll(allItems.map { it.toEntity() })
+                    Log.d(TAG, "Successfully refreshed and cached ${allItems.size} media items from Flexeo & HiAnime")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed refreshing content: ${e.message}", e)

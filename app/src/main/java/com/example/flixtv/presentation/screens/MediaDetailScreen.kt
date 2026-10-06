@@ -172,7 +172,7 @@ fun MediaDetailScreen(
                                 )
                         )
 
-                        // Studio identity
+                        // Studio / Provider identity
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -183,8 +183,9 @@ fun MediaDetailScreen(
                                 tint = PrimaryAzure,
                                 modifier = Modifier.size(16.dp)
                             )
+                            val providerName = if (mediaItem.provider.isNotBlank()) mediaItem.provider else "Flexeo"
                             Text(
-                                text = "CINEWAVE STUDIOS • PREMIERE",
+                                text = "$providerName Streaming Provider • HD Quality",
                                 color = PrimaryAzure,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,

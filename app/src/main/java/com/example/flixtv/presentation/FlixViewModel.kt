@@ -81,6 +81,11 @@ class FlixViewModel @Inject constructor(
         _selectedCategory.value = category
     }
 
+    suspend fun resolveStreamUrl(item: MediaItem, season: Int = 1, episode: Int = 1): String {
+        val resolved = repository.resolveStreamUrl(item, season, episode)
+        return resolved.ifBlank { item.streamUrl ?: item.embedUrl ?: "" }
+    }
+
     fun onSearchQueryChanged(query: String) {
         _searchQuery.value = query
         searchJob?.cancel()

@@ -10,6 +10,7 @@ data class MediaItem(
     val embedUrl: String? = null,
     val synopsis: String? = null,
     val category: String = "Movie", // "Movie", "TV Show", "Anime"
+    val provider: String = "Flexeo", // "Flexeo" or "HiAnime"
     val rating: String = "98% Match",
     val releaseYear: String = "2025",
     val durationOrEpisodes: String = "2h 15m",

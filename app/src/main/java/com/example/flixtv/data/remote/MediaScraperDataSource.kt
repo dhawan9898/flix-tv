@@ -1,6 +1,8 @@
 package com.example.flixtv.data.remote
 
 import android.util.Log
+import com.example.flixtv.data.remote.providers.FlexeoProvider
+import com.example.flixtv.data.remote.providers.HiAnimeProvider
 import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import kotlinx.coroutines.Dispatchers
@@ -19,7 +21,10 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class MediaScraperDataSource @Inject constructor() {
+class MediaScraperDataSource @Inject constructor(
+    private val flexeoProvider: FlexeoProvider,
+    private val hiAnimeProvider: HiAnimeProvider
+) {
 
     companion object {
         private const val TAG = "MediaScraper"
@@ -630,25 +635,94 @@ class MediaScraperDataSource @Inject constructor() {
     }
 
     /**
-     * Universal search across Movies, TV Series, and Anime
+     * Fetch media from Flexeo Provider (Movies & TV Shows)
+     */
+    suspend fun fetchFlexeoMedia(): List<MediaItem> = flexeoProvider.getCatalog()
+
+    /**
+     * Fetch media from HiAnime Provider (Anime)
+     */
+    suspend fun fetchHiAnimeMedia(): List<MediaItem> = hiAnimeProvider.getAnimeCatalog()
+
+    /**
+     * Aggregates media from Flexeo (Movies/TV), HiAnime (Anime), TMDB & AniList
+     */
+    suspend fun fetchAllProviders(): Result<List<MediaItem>> = coroutineScope {
+        try {
+            val flexeoDeferred = async(Dispatchers.IO) { flexeoProvider.getCatalog() }
+            val hiAnimeDeferred = async(Dispatchers.IO) { hiAnimeProvider.getAnimeCatalog() }
+            val tmdbDeferred = async(Dispatchers.IO) { fetchTrendingTmdb().getOrDefault(emptyList()) }
+            val aniListDeferred = async(Dispatchers.IO) { fetchTrendingAnime().getOrDefault(emptyList()) }
+
+            val flexeoItems = flexeoDeferred.await()
+            val hiAnimeItems = hiAnimeDeferred.await()
+            val tmdbItems = tmdbDeferred.await()
+            val aniListItems = aniListDeferred.await()
+
+            val combined = mutableListOf<MediaItem>()
+            combined.addAll(flexeoItems)
+            combined.addAll(hiAnimeItems)
+            combined.addAll(tmdbItems)
+            combined.addAll(aniListItems)
+
+            if (combined.isEmpty()) {
+                return@coroutineScope Result.success(getCuratedFallbacks())
+            }
+
+            // Remove duplicates by id or title
+            val distinctList = combined.distinctBy { it.id.ifEmpty { it.title } }
+            Result.success(distinctList)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed fetching all providers: ${e.message}", e)
+            Result.success(getCuratedFallbacks())
+        }
+    }
+
+    /**
+     * Resolves playable video stream URL from Flexeo or HiAnime provider
+     */
+    suspend fun resolveStreamForMedia(
+        item: MediaItem,
+        seasonNumber: Int = 1,
+        episodeNumber: Int = 1
+    ): String = withContext(Dispatchers.IO) {
+        return@withContext if (item.provider == "HiAnime" || item.category == "Anime") {
+            val animeId = item.id.removePrefix("hianime_").removePrefix("anime_")
+            hiAnimeProvider.resolveAnimeStreamUrl(animeId, episodeNumber)
+        } else {
+            flexeoProvider.resolveStreamUrl(
+                tmdbId = item.tmdbId,
+                season = seasonNumber,
+                episode = episodeNumber,
+                isTvShow = item.category == "TV Show",
+                fallbackEmbed = item.embedUrl
+            )
+        }
+    }
+
+    /**
+     * Universal search across Flexeo (Movies & TV) and HiAnime (Anime)
      */
     suspend fun universalSearch(query: String): Result<List<MediaItem>> = coroutineScope {
         if (query.isBlank()) return@coroutineScope Result.success(emptyList())
 
+        val flexeoSearchDef = async(Dispatchers.IO) { flexeoProvider.search(query) }
+        val hiAnimeSearchDef = async(Dispatchers.IO) { hiAnimeProvider.search(query) }
         val tmdbDeferred = async(Dispatchers.IO) { searchTmdb(query).getOrDefault(emptyList()) }
         val animeDeferred = async(Dispatchers.IO) { searchAnime(query).getOrDefault(emptyList()) }
 
+        val flexeoRes = flexeoSearchDef.await()
+        val hiAnimeRes = hiAnimeSearchDef.await()
         val tmdbResults = tmdbDeferred.await()
         val animeResults = animeDeferred.await()
 
         val combined = mutableListOf<MediaItem>()
-        val maxLen = maxOf(tmdbResults.size, animeResults.size)
-        for (i in 0 until maxLen) {
-            if (i < tmdbResults.size) combined.add(tmdbResults[i])
-            if (i < animeResults.size) combined.add(animeResults[i])
-        }
+        combined.addAll(flexeoRes)
+        combined.addAll(hiAnimeRes)
+        combined.addAll(tmdbResults)
+        combined.addAll(animeResults)
 
-        Result.success(combined)
+        Result.success(combined.distinctBy { it.id.ifEmpty { it.title } })
     }
 
     /**

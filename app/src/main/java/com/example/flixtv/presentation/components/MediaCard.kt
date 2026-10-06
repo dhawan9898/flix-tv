@@ -158,19 +158,20 @@ fun MediaCard(
                         fontWeight = FontWeight.Bold
                     )
                 }
-            } else if (item.category.isNotBlank()) {
+            } else if (item.provider.isNotBlank() || item.category.isNotBlank()) {
+                val badgeText = if (item.provider.isNotBlank()) item.provider else item.category
                 Box(
                     modifier = Modifier
                         .padding(10.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color.Black.copy(alpha = 0.65f))
-                        .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.70f))
+                        .border(1.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                         .align(Alignment.TopStart)
                 ) {
                     Text(
-                        text = item.category.uppercase(),
-                        color = if (item.category == "Anime") SecondaryIceCyan else Color.White.copy(alpha = 0.85f),
+                        text = badgeText.uppercase(),
+                        color = if (badgeText == "HiAnime" || item.category == "Anime") SecondaryIceCyan else Color.White.copy(alpha = 0.90f),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.05.sp
