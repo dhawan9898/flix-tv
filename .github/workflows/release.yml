@@ -2,8 +2,8 @@ name: Build and Release Flix TV
 
 on:
   push:
-    branches:
-      - main
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   build-and-release:
@@ -44,9 +44,11 @@ jobs:
           VERSION_NAME: ${{ env.VERSION_NAME }}
 
       - name: Sign APK (Optional but recommended)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: echo "Signing step skipped for boilerplate. Outputting to app/build/outputs/apk/release/"
 
       - name: Create GitHub Release
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ env.VERSION_NAME }}
