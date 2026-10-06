@@ -117,8 +117,14 @@ fun VideoPlayerScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val isEmbedLink = streamUrl.contains("vidsrc") || streamUrl.contains("embed")
-    var useWebPlayer by remember { mutableStateOf(isEmbedLink || streamUrl.isBlank()) }
+    val isDirectVideo = streamUrl.endsWith(".mp4", ignoreCase = true) ||
+                        streamUrl.endsWith(".m3u8", ignoreCase = true) ||
+                        streamUrl.contains(".mp4?", ignoreCase = true) ||
+                        streamUrl.contains(".m3u8?", ignoreCase = true) ||
+                        streamUrl.contains("/sample/", ignoreCase = true)
+
+    val isEmbedLink = !isDirectVideo && (streamUrl.contains("/embed/") || streamUrl.contains("vidsrc"))
+    var useWebPlayer by remember { mutableStateOf(isEmbedLink && streamUrl.isNotBlank()) }
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -150,7 +156,7 @@ fun VideoPlayerScreen(
     }
 
     val resolvedNativeStream = remember(streamUrl) {
-        if (streamUrl.isNotBlank() && !isEmbedLink) streamUrl else FALLBACK_STREAM
+        if (streamUrl.isNotBlank()) streamUrl else FALLBACK_STREAM
     }
 
     val resolvedEmbedStream = remember(embedUrl, streamUrl) {
@@ -355,13 +361,36 @@ fun VideoPlayerScreen(
         }
 
         if (isBuffering && !hasPlaybackError && !webLoadFailed) {
-            CircularProgressIndicator(
-                color = NetflixRed,
-                strokeWidth = 4.dp,
+            Box(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(56.dp)
-            )
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = NetflixRed,
+                        strokeWidth = 4.dp,
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Text(
+                        text = "Loading $title...",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "Connecting to high-speed stream server...",
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 13.sp
+                    )
+                }
+            }
         }
 
         gestureText?.let {
