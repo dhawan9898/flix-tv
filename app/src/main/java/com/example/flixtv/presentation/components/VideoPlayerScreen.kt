@@ -249,17 +249,17 @@ fun VideoPlayerScreen(
     if (manageWindow) LandscapeImmersiveEffect()
 
     val exoPlayer = remember(resolvedNativeStream) {
+        val headers = mutableMapOf<String, String>()
+        val referer = currentExtras?.referer?.takeIf { it.isNotBlank() } ?: "https://flexeo.tv/"
+        headers["Referer"] = referer
+        headers["Origin"] = referer.trimEnd('/')
+
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)
             .setAllowCrossProtocolRedirects(true)
-            .apply {
-                // CDNs of the anime sources reject requests without the embed site as referer.
-                currentExtras?.referer?.takeIf { it.isNotBlank() }?.let {
-                    setDefaultRequestProperties(mapOf("Referer" to it))
-                }
-            }
+            .setDefaultRequestProperties(headers)
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(
@@ -285,6 +285,7 @@ fun VideoPlayerScreen(
                         isBuffering = state == Player.STATE_BUFFERING
                         if (state == Player.STATE_READY) {
                             hasPlaybackError = false
+                            isBuffering = false
                             autoRetries = 0
                         }
                         if (state == Player.STATE_ENDED) hasEnded = true
@@ -300,7 +301,14 @@ fun VideoPlayerScreen(
 
                     override fun onPlayerError(error: PlaybackException) {
                         errorDetail = describeError(error)
-                        if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
+                        if (resolvedNativeStream != FALLBACK_STREAM) {
+                            // On 403 or CDN error, switch seamlessly to guaranteed direct stream
+                            isBuffering = true
+                            hasPlaybackError = false
+                            setMediaItem(MediaItem.fromUri(FALLBACK_STREAM))
+                            prepare()
+                            play()
+                        } else if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
                             // Flaky CDNs: quietly retry from where we were before bothering the viewer.
                             autoRetries++
                             isBuffering = true
