@@ -33,7 +33,6 @@ import coil.compose.AsyncImage
 import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import com.example.flixtv.presentation.components.FrostedOrbButton
-import com.example.flixtv.data.remote.providers.HiAnimeProvider
 import com.example.flixtv.theme.PrimaryAzure
 import com.example.flixtv.theme.SecondaryIceCyan
 
@@ -50,14 +49,12 @@ fun MediaDetailScreen(
     var isInWatchlist by remember { mutableStateOf(false) }
     val isSeries = mediaItem.category == "TV Show" || mediaItem.category == "Anime"
 
-    // Anime streams are resolved per episode from the provider site, so the episode list comes
-    // from there too (null while loading) rather than from the cached placeholders.
-    val isAnime = HiAnimeProvider.isAnime(mediaItem)
+    val isAnime = mediaItem.category == "Anime"
     var animeEpisodes by remember(mediaItem.id) { mutableStateOf<List<EpisodeItem>?>(null) }
     if (isAnime) {
         LaunchedEffect(mediaItem.id) { animeEpisodes = loadAnimeEpisodes(mediaItem) }
     }
-    val episodes = if (isAnime) animeEpisodes.orEmpty() else mediaItem.episodes
+    val episodes = if (isAnime && !animeEpisodes.isNullOrEmpty()) animeEpisodes.orEmpty() else mediaItem.episodes
     val episodesLoading = isAnime && animeEpisodes == null
     val firstEp = episodes.firstOrNull()
     val defaultStream = firstEp?.streamUrl ?: mediaItem.streamUrl ?: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"

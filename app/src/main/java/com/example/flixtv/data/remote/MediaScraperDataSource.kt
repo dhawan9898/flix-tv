@@ -2,7 +2,6 @@ package com.example.flixtv.data.remote
 
 import android.util.Log
 import com.example.flixtv.data.remote.providers.FlexeoProvider
-import com.example.flixtv.data.remote.providers.HiAnimeProvider
 import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import com.example.flixtv.domain.models.StreamSource
@@ -23,8 +22,7 @@ import javax.inject.Singleton
 
 @Singleton
 class MediaScraperDataSource @Inject constructor(
-    private val flexeoProvider: FlexeoProvider,
-    private val hiAnimeProvider: HiAnimeProvider
+    private val flexeoProvider: FlexeoProvider
 ) {
 
     companion object {
@@ -636,33 +634,25 @@ class MediaScraperDataSource @Inject constructor(
     }
 
     /**
-     * Fetch media from Flexeo Provider (Movies & TV Shows)
+     * Fetch media from Flexeo Provider
      */
     suspend fun fetchFlexeoMedia(): List<MediaItem> = flexeoProvider.getCatalog()
 
     /**
-     * Fetch media from HiAnime Provider (Anime)
-     */
-    suspend fun fetchHiAnimeMedia(): List<MediaItem> = hiAnimeProvider.getAnimeCatalog()
-
-    /**
-     * Aggregates media from Flexeo (Movies/TV), HiAnime (Anime), TMDB & AniList
+     * Aggregates media from Flexeo, TMDB & AniList (all mapped to Flexeo provider)
      */
     suspend fun fetchAllProviders(): Result<List<MediaItem>> = coroutineScope {
         try {
             val flexeoDeferred = async(Dispatchers.IO) { flexeoProvider.getCatalog() }
-            val hiAnimeDeferred = async(Dispatchers.IO) { hiAnimeProvider.getAnimeCatalog() }
             val tmdbDeferred = async(Dispatchers.IO) { fetchTrendingTmdb().getOrDefault(emptyList()) }
             val aniListDeferred = async(Dispatchers.IO) { fetchTrendingAnime().getOrDefault(emptyList()) }
 
             val flexeoItems = flexeoDeferred.await()
-            val hiAnimeItems = hiAnimeDeferred.await()
             val tmdbItems = tmdbDeferred.await()
             val aniListItems = aniListDeferred.await()
 
             val combined = mutableListOf<MediaItem>()
             combined.addAll(flexeoItems)
-            combined.addAll(hiAnimeItems)
             combined.addAll(tmdbItems)
             combined.addAll(aniListItems)
 
@@ -670,8 +660,9 @@ class MediaScraperDataSource @Inject constructor(
                 return@coroutineScope Result.success(getCuratedFallbacks())
             }
 
-            // Remove duplicates by id or title
-            val distinctList = combined.distinctBy { it.id.ifEmpty { it.title } }
+            // Ensure all items state provider = "Flexeo"
+            val updatedList = combined.map { it.copy(provider = "Flexeo") }
+            val distinctList = updatedList.distinctBy { it.id.ifEmpty { it.title } }
             Result.success(distinctList)
         } catch (e: Exception) {
             Log.e(TAG, "Failed fetching all providers: ${e.message}", e)
@@ -680,55 +671,48 @@ class MediaScraperDataSource @Inject constructor(
     }
 
     /**
-     * Resolves playable video stream URL from Flexeo (movies/TV). Anime goes through
-     * [resolveAnimeSource], which also carries referer/subtitles/skip markers.
+     * Resolves playable video stream URL from Flexeo provider
      */
     suspend fun resolveStreamForMedia(
         item: MediaItem,
         seasonNumber: Int = 1,
         episodeNumber: Int = 1
     ): String = withContext(Dispatchers.IO) {
-        return@withContext if (HiAnimeProvider.isAnime(item)) {
-            hiAnimeProvider.resolveStream(item, episodeNumber, "sub").streamUrl
-        } else {
-            flexeoProvider.resolveStream(item, seasonNumber, episodeNumber).streamUrl
-        }
+        return@withContext flexeoProvider.resolveStream(item, seasonNumber, episodeNumber).streamUrl
     }
 
-    /** Full playback source (stream + referer) for a movie or TV episode from Flexeo. */
+    /** Full playback source (stream + referer) for a movie, TV show, or anime episode from Flexeo. */
     suspend fun resolveMovieSource(item: MediaItem, season: Int, episode: Int): StreamSource =
         flexeoProvider.resolveStream(item, season, episode)
 
-    /** Real episode list for an anime title (empty if the site doesn't know it). */
-    suspend fun fetchAnimeEpisodes(item: MediaItem): List<EpisodeItem> = hiAnimeProvider.getEpisodes(item)
+    /** Episode list for a series or anime title from item episodes or TMDB. */
+    fun fetchAnimeEpisodes(item: MediaItem): List<EpisodeItem> = item.episodes
 
-    /** Full playback source (stream + referer + subtitles + skip markers) for an anime episode. */
+    /** Full playback source for an episode from Flexeo. */
     suspend fun resolveAnimeSource(item: MediaItem, episodeNumber: Int, mode: String): StreamSource =
-        hiAnimeProvider.resolveStream(item, episodeNumber, mode)
+        flexeoProvider.resolveStream(item, 1, episodeNumber)
 
     /**
-     * Universal search across Flexeo (Movies & TV) and HiAnime (Anime)
+     * Universal search across Flexeo (Movies, TV Shows, and Anime)
      */
     suspend fun universalSearch(query: String): Result<List<MediaItem>> = coroutineScope {
         if (query.isBlank()) return@coroutineScope Result.success(emptyList())
 
         val flexeoSearchDef = async(Dispatchers.IO) { flexeoProvider.search(query) }
-        val hiAnimeSearchDef = async(Dispatchers.IO) { hiAnimeProvider.search(query) }
         val tmdbDeferred = async(Dispatchers.IO) { searchTmdb(query).getOrDefault(emptyList()) }
         val animeDeferred = async(Dispatchers.IO) { searchAnime(query).getOrDefault(emptyList()) }
 
         val flexeoRes = flexeoSearchDef.await()
-        val hiAnimeRes = hiAnimeSearchDef.await()
         val tmdbResults = tmdbDeferred.await()
         val animeResults = animeDeferred.await()
 
         val combined = mutableListOf<MediaItem>()
         combined.addAll(flexeoRes)
-        combined.addAll(hiAnimeRes)
         combined.addAll(tmdbResults)
         combined.addAll(animeResults)
 
-        Result.success(combined.distinctBy { it.id.ifEmpty { it.title } })
+        val updatedList = combined.map { it.copy(provider = "Flexeo") }
+        Result.success(updatedList.distinctBy { it.id.ifEmpty { it.title } })
     }
 
     /**

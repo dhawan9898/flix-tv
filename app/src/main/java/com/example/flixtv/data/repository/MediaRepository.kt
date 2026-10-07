@@ -86,7 +86,7 @@ class MediaRepository @Inject constructor(
     }
 
     /**
-     * Resolves playable video stream URL for a media item from Flexeo or HiAnime
+     * Resolves playable video stream URL for a media item from Flexeo
      */
     suspend fun resolveStreamUrl(
         item: MediaItem,
@@ -96,16 +96,15 @@ class MediaRepository @Inject constructor(
         return@withContext scraperDataSource.resolveStreamForMedia(item, seasonNumber, episodeNumber)
     }
 
-    /** Resolves stream + referer for a movie or TV episode from Flexeo. */
+    /** Resolves stream + referer for a movie, TV show, or anime episode from Flexeo. */
     suspend fun resolveMovieSource(item: MediaItem, season: Int, episode: Int): StreamSource =
         scraperDataSource.resolveMovieSource(item, season, episode)
 
-    /** Real episode list for an anime title from the provider site. */
-    suspend fun getAnimeEpisodes(item: MediaItem): List<EpisodeItem> = withContext(Dispatchers.IO) {
+    /** Episode list for a series or anime title. */
+    suspend fun getAnimeEpisodes(item: MediaItem): List<EpisodeItem> =
         scraperDataSource.fetchAnimeEpisodes(item)
-    }
 
-    /** Resolves stream + referer + subtitles + skip markers for an anime episode. */
+    /** Resolves stream source for an episode from Flexeo. */
     suspend fun resolveAnimeSource(item: MediaItem, episodeNumber: Int, mode: String): StreamSource =
         scraperDataSource.resolveAnimeSource(item, episodeNumber, mode)
 
@@ -114,7 +113,7 @@ class MediaRepository @Inject constructor(
         aniSkipClient.getIntervals(title, episodeNumber, lengthSeconds)
 
     /**
-     * Fetches movies, TV shows (Flexeo), anime (HiAnime), and charts concurrently, caching into Room
+     * Fetches movies, TV shows, and anime from Flexeo, caching into Room
      */
     suspend fun refreshAllContent() = coroutineScope {
         try {
@@ -126,7 +125,7 @@ class MediaRepository @Inject constructor(
             providersResult.onSuccess { allItems ->
                 if (allItems.isNotEmpty()) {
                     mediaDao.insertAll(allItems.map { it.toEntity() })
-                    Log.d(TAG, "Successfully refreshed and cached ${allItems.size} media items from Flexeo & HiAnime")
+                    Log.d(TAG, "Successfully refreshed and cached ${allItems.size} media items from Flexeo")
                 }
             }
         } catch (e: Exception) {

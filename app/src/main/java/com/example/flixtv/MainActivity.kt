@@ -36,7 +36,6 @@ import androidx.navigation3.ui.NavDisplay
 import com.example.flixtv.domain.models.EpisodeItem
 import com.example.flixtv.domain.models.MediaItem
 import com.example.flixtv.presentation.FlixViewModel
-import com.example.flixtv.presentation.components.AnimePlayerScreen
 import com.example.flixtv.presentation.components.ResolvedPlayerScreen
 import com.example.flixtv.presentation.components.VideoPlayerScreen
 import com.example.flixtv.presentation.screens.HomeScreen
@@ -52,11 +51,6 @@ private data object SearchRoute
 private data object AnimeRoute
 private data object SettingsRoute
 private data class DetailRoute(val mediaItem: MediaItem)
-private data class AnimePlayerRoute(
-    val item: MediaItem,
-    val episodes: List<EpisodeItem>,
-    val episodeNumber: Int
-)
 private data class StreamPlayerRoute(
     val item: MediaItem,
     val title: String,
@@ -165,8 +159,8 @@ class MainActivity : ComponentActivity() {
                                             backStack.add(PlayerRoute(stream, title, embed))
                                         },
                                         loadAnimeEpisodes = { viewModel.loadAnimeEpisodes(it) },
-                                        onPlayAnimeEpisode = { item, episodes, number ->
-                                            backStack.add(AnimePlayerRoute(item, episodes, number))
+                                        onPlayAnimeEpisode = { item, _, number ->
+                                            backStack.add(StreamPlayerRoute(item, "${item.title} - Episode $number", 1, number))
                                         },
                                         onPlayResolved = { item, title, season, episode ->
                                             backStack.add(StreamPlayerRoute(item, title, season, episode))
@@ -177,16 +171,6 @@ class MainActivity : ComponentActivity() {
                                     ResolvedPlayerScreen(
                                         title = key.title,
                                         resolveSource = { viewModel.resolveMovieSource(key.item, key.season, key.episode) },
-                                        onBackClick = { backStack.removeLastOrNull() }
-                                    )
-                                }
-                                is AnimePlayerRoute -> NavEntry(key) {
-                                    AnimePlayerScreen(
-                                        item = key.item,
-                                        episodes = key.episodes,
-                                        startEpisode = key.episodeNumber,
-                                        resolveSource = { ep, mode -> viewModel.resolveAnimeSource(key.item, ep, mode) },
-                                        lookupSkipIntervals = { title, ep, len -> viewModel.skipIntervals(title, ep, len) },
                                         onBackClick = { backStack.removeLastOrNull() }
                                     )
                                 }

@@ -171,7 +171,7 @@ fun MediaCard(
                 ) {
                     Text(
                         text = badgeText.uppercase(),
-                        color = if (badgeText == "HiAnime" || item.category == "Anime") SecondaryIceCyan else Color.White.copy(alpha = 0.90f),
+                        color = Color.White.copy(alpha = 0.90f),
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.05.sp

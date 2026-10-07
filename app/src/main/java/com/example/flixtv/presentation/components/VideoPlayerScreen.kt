@@ -189,7 +189,9 @@ fun VideoPlayerScreen(
                         streamUrl.endsWith(".m3u8", ignoreCase = true) ||
                         streamUrl.contains(".mp4?", ignoreCase = true) ||
                         streamUrl.contains(".m3u8?", ignoreCase = true) ||
-                        streamUrl.contains("/sample/", ignoreCase = true)
+                        streamUrl.contains("/sample/", ignoreCase = true) ||
+                        streamUrl.contains("googlevideo", ignoreCase = true) ||
+                        streamUrl.contains("mux.dev", ignoreCase = true)
 
     val isEmbedLink = !isDirectVideo && (streamUrl.contains("/embed/") || streamUrl.contains("vidsrc"))
     var useWebPlayer by remember { mutableStateOf(isEmbedLink && streamUrl.isNotBlank()) }
