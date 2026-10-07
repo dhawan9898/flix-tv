@@ -322,7 +322,15 @@ fun VideoPlayerScreen(
             }
     }
 
-    // Anime streams carry the real duration only once prepared: hand it over once per stream.
+    // Seamless fallback to native ExoPlayer if Web Embed Player fails or gives HTTP 403
+    LaunchedEffect(webLoadFailed) {
+        if (webLoadFailed) {
+            useWebPlayer = false
+            webLoadFailed = false
+            isBuffering = true
+            hasPlaybackError = false
+        }
+    }
     LaunchedEffect(exoPlayer) {
         while (!durationReported) {
             val d = exoPlayer.duration
