@@ -185,17 +185,19 @@ fun VideoPlayerScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentExtras by rememberUpdatedState(extras)
 
+    val effectiveEmbedUrl = embedUrl.takeIf { !it.isNullOrBlank() }
+        ?: streamUrl.takeIf { it.contains("/embed/") || it.contains("flexeo") || it.contains("vidsrc") }
+
     val isDirectVideo = streamUrl.endsWith(".mp4", ignoreCase = true) ||
                         streamUrl.endsWith(".m3u8", ignoreCase = true) ||
                         streamUrl.contains(".mp4?", ignoreCase = true) ||
                         streamUrl.contains(".m3u8?", ignoreCase = true) ||
-                        streamUrl.contains("/sample/", ignoreCase = true) ||
                         streamUrl.contains("googlevideo", ignoreCase = true) ||
                         streamUrl.contains("mux.dev", ignoreCase = true)
 
-    val isEmbedLink = !isDirectVideo && (streamUrl.contains("/embed/") || streamUrl.contains("vidsrc"))
-    // Always default to native ExoPlayer for instant, smooth video playback
-    var useWebPlayer by remember { mutableStateOf(false) }
+    var useWebPlayer by remember(streamUrl, embedUrl) {
+        mutableStateOf(!isDirectVideo && !effectiveEmbedUrl.isNullOrBlank())
+    }
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
@@ -247,15 +249,28 @@ fun VideoPlayerScreen(
         if (streamUrl.isNotBlank()) streamUrl else FALLBACK_STREAM
     }
 
-    val resolvedEmbedStream = remember(embedUrl, streamUrl) {
-        when {
-            !embedUrl.isNullOrBlank() -> embedUrl
-            isEmbedLink -> streamUrl
-            else -> null
-        }
+    val resolvedEmbedStream = remember(embedUrl, streamUrl, effectiveEmbedUrl) {
+        effectiveEmbedUrl ?: embedUrl ?: streamUrl
     }
 
-    if (manageWindow) LandscapeImmersiveEffect()
+    var activeEmbedUrl by remember(streamUrl, embedUrl) {
+        mutableStateOf(resolvedEmbedStream)
+    }
+    var showServerDialog by remember { mutableStateOf(false) }
+
+    if (showServerDialog) {
+        ServerDialog(
+            currentUrl = activeEmbedUrl ?: "",
+            streamUrl = streamUrl,
+            onSelectServer = { newUrl ->
+                activeEmbedUrl = newUrl
+                useWebPlayer = true
+                webReloadKey++
+                showServerDialog = false
+            },
+            onDismiss = { showServerDialog = false }
+        )
+    }
 
     val exoPlayer = remember(resolvedNativeStream) {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
@@ -1118,6 +1133,56 @@ private fun EpisodesDialog(
             LazyColumn(modifier = Modifier.height(280.dp)) {
                 items(episodes, key = { it.number }) { ep ->
                     TrackRow("${ep.number}. ${ep.title}", ep.number == current) { onSelect(ep.number) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerDialog(
+    currentUrl: String,
+    streamUrl: String,
+    onSelectServer: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val tmdbId = streamUrl.filter { it.isDigit() }.takeIf { it.isNotBlank() } ?: "533535"
+    val isTv = streamUrl.contains("/tv/") || streamUrl.contains("series") || streamUrl.contains("anime")
+
+    val servers = listOf(
+        "Flexeo HD (Primary)" to if (isTv) "https://flexeo.tv/embed/tv/$tmdbId/1/1" else "https://flexeo.tv/embed/movie/$tmdbId",
+        "Flexeo Mirror 2" to if (isTv) "https://flexeo.site/embed/tv/$tmdbId/1/1" else "https://flexeo.site/embed/movie/$tmdbId",
+        "VidSrc HD Server" to if (isTv) "https://vidsrc.cc/v2/embed/tv/$tmdbId/1/1" else "https://vidsrc.cc/v2/embed/movie/$tmdbId",
+        "AutoEmbed Server 4K" to if (isTv) "https://player.autoembed.cc/embed/tv/$tmdbId/1/1" else "https://player.autoembed.cc/embed/movie/$tmdbId"
+    )
+
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF181818))
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Select Streaming Server", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            servers.forEach { (name, url) ->
+                val isSelected = currentUrl.contains(url.substringAfter("//").substringBefore("/"))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) NetflixRed.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.05f))
+                        .clickable { onSelectServer(url) }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = name,
+                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.75f),
+                        fontSize = 14.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    )
                 }
             }
         }
