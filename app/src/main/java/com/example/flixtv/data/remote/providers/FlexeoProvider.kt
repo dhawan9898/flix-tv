@@ -199,6 +199,7 @@ class FlexeoProvider @Inject constructor(
         withContext(Dispatchers.IO) {
             val tmdbId = item.tmdbId ?: 550
             val isTv = item.category == "TV Show" || item.category == "Anime"
+            val flexeoEmbedUrl = embedUrl(BASE_URL, tmdbId, isTv, season, episode)
 
             val direct = try {
                 resolveFirst(MIRRORS, HEDGE_DELAY_MS) { origin ->
@@ -211,8 +212,7 @@ class FlexeoProvider @Inject constructor(
             val validStreamUrl = when {
                 direct?.streamUrl?.startsWith("http") == true &&
                 (direct.streamUrl.contains(".m3u8") || direct.streamUrl.contains(".mp4")) -> direct.streamUrl
-                !item.streamUrl.isNullOrBlank() -> item.streamUrl
-                else -> "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+                else -> item.embedUrl ?: flexeoEmbedUrl
             }
 
             StreamSource(

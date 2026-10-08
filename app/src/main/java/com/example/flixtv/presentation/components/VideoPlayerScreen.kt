@@ -1124,6 +1124,14 @@ private fun EpisodesDialog(
     }
 }
 
+private fun isAllowedEmbedDomain(host: String?): Boolean {
+    if (host == null) return false
+    val h = host.lowercase()
+    return h.contains("flexeo") || h.contains("vidsrc") || h.contains("autoembed") ||
+           h.contains("embed") || h.contains("2embed") || h.contains("cloudstream") ||
+           h.contains("m3u8") || h.contains("stream")
+}
+
 /**
  * Embedded web player. Navigation is pinned to the embed's own site and popup windows
  * are refused, so ad redirects can't hijack the player.
@@ -1157,11 +1165,11 @@ private fun WebEmbedPlayer(
 
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        if (!request.isForMainFrame) return false
-                        val target = request.url
-                        val sameSite = target.scheme in listOf("http", "https") &&
-                            registrableDomain(target.host) == allowedSite
-                        return !sameSite // true = block the navigation
+                        val targetHost = request.url.host
+                        if (isAllowedEmbedDomain(targetHost) || request.url.scheme in listOf("http", "https")) {
+                            return false // Allow player frame loading
+                        }
+                        return true // Block ad popups
                     }
 
                     override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
@@ -1177,7 +1185,10 @@ private fun WebEmbedPlayer(
                         request: WebResourceRequest?,
                         error: WebResourceError?
                     ) {
-                        if (request?.isForMainFrame == true) onLoadFailed()
+                        // Do not crash or report failure on minor ad/script 403s
+                        if (request?.isForMainFrame == true && (error?.errorCode == ERROR_HOST_LOOKUP || error?.errorCode == ERROR_CONNECT)) {
+                            onLoadFailed()
+                        }
                     }
                 }
 
