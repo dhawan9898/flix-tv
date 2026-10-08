@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import com.example.flixtv.domain.models.StreamSource
 
 private val NetflixRed = Color(0xFFE50914)
@@ -51,22 +52,14 @@ fun ResolvedPlayerScreen(
         source = null
         val result = try {
             resolveSource()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            Result.success(
-                StreamSource(
-                    streamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                    referer = "https://flexeo.tv/"
-                )
-            )
+            Result.failure(e)
         }
         result.fold(
             onSuccess = { source = it },
-            onFailure = {
-                source = StreamSource(
-                    streamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                    referer = "https://flexeo.tv/"
-                )
-            }
+            onFailure = { failure = it.message?.takeIf { m -> m.isNotBlank() } ?: "No playable stream was found. Please try again." }
         )
     }
 

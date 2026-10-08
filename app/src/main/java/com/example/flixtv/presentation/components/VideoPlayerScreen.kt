@@ -118,8 +118,6 @@ private const val SEEK_STEP_MS = 10_000L
 private const val NEXT_EPISODE_THRESHOLD_MS = 20_000L
 private const val NEXT_EPISODE_COUNTDOWN_MS = 10_000L
 private const val MAX_AUTO_RETRIES = 3
-private const val FALLBACK_STREAM =
-    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
 
 /** One entry of the in-player episode picker. */
 data class PlayerEpisode(val number: Int, val title: String)
@@ -192,8 +190,7 @@ fun VideoPlayerScreen(
                         streamUrl.endsWith(".m3u8", ignoreCase = true) ||
                         streamUrl.contains(".mp4?", ignoreCase = true) ||
                         streamUrl.contains(".m3u8?", ignoreCase = true) ||
-                        streamUrl.contains("googlevideo", ignoreCase = true) ||
-                        streamUrl.contains("mux.dev", ignoreCase = true)
+                        streamUrl.contains("googlevideo", ignoreCase = true)
 
     var useWebPlayer by remember(streamUrl, embedUrl) {
         mutableStateOf(!isDirectVideo && !effectiveEmbedUrl.isNullOrBlank())
@@ -246,7 +243,7 @@ fun VideoPlayerScreen(
     }
 
     val resolvedNativeStream = remember(streamUrl) {
-        if (streamUrl.isNotBlank()) streamUrl else FALLBACK_STREAM
+        streamUrl
     }
 
     val resolvedEmbedStream = remember(embedUrl, streamUrl, effectiveEmbedUrl) {
@@ -328,14 +325,7 @@ fun VideoPlayerScreen(
 
                     override fun onPlayerError(error: PlaybackException) {
                         errorDetail = describeError(error)
-                        if (resolvedNativeStream != FALLBACK_STREAM) {
-                            // On CDN error, switch seamlessly to guaranteed direct stream
-                            isBuffering = true
-                            hasPlaybackError = false
-                            setMediaItem(MediaItem.fromUri(FALLBACK_STREAM))
-                            prepare()
-                            play()
-                        } else if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
+                        if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
                             // Flaky CDNs: quietly retry from where we were before bothering the viewer.
                             autoRetries++
                             isBuffering = true
