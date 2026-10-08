@@ -32,17 +32,6 @@ class MediaScraperDataSource @Inject constructor(
         private const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val ANILIST_URL = "https://graphql.anilist.co"
 
-        // Verified High-Bandwidth Direct Streams that play on all Android devices (HTTP 200 OK)
-        const val STREAM_TEARS_OF_STEEL =
-            "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8"
-        const val STREAM_BIG_BUCK_BUNNY =
-            "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
-        const val STREAM_SINTEL =
-            "https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_ns_line/main.m3u8"
-        const val STREAM_ELEPHANTS_DREAM =
-            "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8"
-        const val STREAM_WEBSERIES_MUX =
-            "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
     }
 
     private fun httpGet(urlString: String, timeoutMs: Int = 8000): String {
@@ -136,11 +125,7 @@ class MediaScraperDataSource @Inject constructor(
                         overview = overview,
                         stillUrl = stillUrl,
                         duration = "${runtime}m",
-                        streamUrl = when (i % 3) {
-                            0 -> STREAM_BIG_BUCK_BUNNY
-                            1 -> STREAM_TEARS_OF_STEEL
-                            else -> STREAM_WEBSERIES_MUX
-                        },
+                        streamUrl = null,
                         embedUrl = "https://vidsrc.xyz/embed/tv?tmdb=$tmdbId&season=1&episode=$epNum"
                     )
                 )
@@ -191,11 +176,7 @@ class MediaScraperDataSource @Inject constructor(
                 val isTv = mediaType == "tv"
                 val matchPercent = (voteAverage * 10).toInt().coerceIn(75, 99)
 
-                val nativeStream = when (i % 3) {
-                    0 -> STREAM_TEARS_OF_STEEL
-                    1 -> STREAM_BIG_BUCK_BUNNY
-                    else -> STREAM_SINTEL
-                }
+                val nativeStream: String? = null
 
                 val embedUrl = if (isTv) {
                     "https://vidsrc.xyz/embed/tv?tmdb=$rawId&season=1&episode=1"
@@ -290,10 +271,7 @@ class MediaScraperDataSource @Inject constructor(
                 val isTv = mediaType == "tv"
                 val matchPercent = (voteAverage * 10).toInt().coerceIn(70, 99)
 
-                val nativeStream = when (i % 2) {
-                    0 -> STREAM_TEARS_OF_STEEL
-                    else -> STREAM_BIG_BUCK_BUNNY
-                }
+                val nativeStream: String? = null
 
                 val embedUrl = if (isTv) {
                     "https://vidsrc.xyz/embed/tv?tmdb=$rawId&season=1&episode=1"
@@ -399,7 +377,7 @@ class MediaScraperDataSource @Inject constructor(
                     }
                 }
 
-                val nativeStream = if (i % 2 == 0) STREAM_SINTEL else STREAM_TEARS_OF_STEEL
+                val nativeStream: String? = null
                 val embedUrl = "https://vidsrc.xyz/embed/movie?tmdb=$rawId"
 
                 // Create full episode list for the anime series
@@ -508,7 +486,7 @@ class MediaScraperDataSource @Inject constructor(
                     }
                 }
 
-                val nativeStream = STREAM_SINTEL
+                val nativeStream: String? = null
                 val embedUrl = "https://vidsrc.xyz/embed/movie?tmdb=$rawId"
 
                 val episodes = if (format != "MOVIE") {
@@ -580,11 +558,7 @@ class MediaScraperDataSource @Inject constructor(
                 val id = "fp_${title.hashCode()}"
                 val isTv = index % 3 == 0
 
-                val nativeStream = when (index % 3) {
-                    0 -> STREAM_BIG_BUCK_BUNNY
-                    1 -> STREAM_TEARS_OF_STEEL
-                    else -> STREAM_ELEPHANTS_DREAM
-                }
+                val nativeStream: String? = null
 
                 val episodes = if (isTv) {
                     (1..8).map { epNum ->
@@ -725,7 +699,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Deadpool & Wolverine",
             posterUrl = "https://image.tmdb.org/t/p/w500/8cdWjvZ2A1M936a281822a.jpg",
             backdropUrl = "https://image.tmdb.org/t/p/w1280/yDHYTfA2424823.jpg",
-            streamUrl = STREAM_TEARS_OF_STEEL,
+            streamUrl = null,
             embedUrl = "https://flexeo.tv/embed/movie/533535",
             synopsis = "Wolverine is recovering from his injuries when he crosses paths with the loudmouth Deadpool. They team up to defeat a common enemy.",
             category = "Movie",
@@ -743,7 +717,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Inside Out 2",
             posterUrl = "https://image.tmdb.org/t/p/w500/vpnP13A24823S39S944a99.jpg",
             backdropUrl = "https://image.tmdb.org/t/p/w1280/p3L142422789.jpg",
-            streamUrl = STREAM_BIG_BUCK_BUNNY,
+            streamUrl = null,
             embedUrl = "https://flexeo.tv/embed/movie/1022789",
             synopsis = "Teenager Riley's mind headquarters is undergoing a sudden demolition to make room for unexpected emotions like Anxiety!",
             category = "Movie",
@@ -760,7 +734,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Solo Leveling (Ore dake Level Up na Ken)",
             posterUrl = "https://m.media-amazon.com/images/M/MV5BODlhWOE5Y2ItYzA3OS00MDgxLTlhMTUtYzRjY2I1MDgzYTAyXkEyXkFqcGc@._V1_.jpg",
             backdropUrl = "https://m.media-amazon.com/images/M/MV5BODlhWOE5Y2ItYzA3OS00MDgxLTlhMTUtYzRjY2I1MDgzYTAyXkEyXkFqcGc@._V1_.jpg",
-            streamUrl = STREAM_TEARS_OF_STEEL,
+            streamUrl = null,
             embedUrl = "https://hianime.to/watch/solo-leveling-18721?ep=1",
             synopsis = "In a world where hunters battle deadly monsters, Sung Jinwoo, the weakest hunter, acquires miraculous power after surviving a double dungeon.",
             category = "Anime",
@@ -781,7 +755,7 @@ class MediaScraperDataSource @Inject constructor(
                     stillUrl = "https://m.media-amazon.com/images/M/MV5BODlhWOE5Y2ItYzA3OS00MDgxLTlhMTUtYzRjY2I1MDgzYTAyXkEyXkFqcGc@._V1_.jpg",
                     duration = "24m",
                     embedUrl = "https://hianime.to/watch/solo-leveling-18721?ep=$epNum",
-                    streamUrl = STREAM_TEARS_OF_STEEL
+                    streamUrl = null
                 )
             }
         ),
@@ -791,7 +765,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Arcane",
             posterUrl = "https://image.tmdb.org/t/p/w500/fqld22332822a.jpg",
             backdropUrl = "https://image.tmdb.org/t/p/w1280/fqld22332822a_bg.jpg",
-            streamUrl = STREAM_SINTEL,
+            streamUrl = null,
             embedUrl = "https://flexeo.tv/embed/tv/94605/2/1",
             synopsis = "Amid the stark discord of twin cities Piltover and Zaun, two sisters fight on opposing sides of a war between magic technologies.",
             category = "TV Show",
@@ -811,7 +785,7 @@ class MediaScraperDataSource @Inject constructor(
                     stillUrl = "https://image.tmdb.org/t/p/w500/fqld22332822a.jpg",
                     duration = "42m",
                     embedUrl = "https://flexeo.tv/embed/tv/94605/2/$epNum",
-                    streamUrl = STREAM_SINTEL
+                    streamUrl = null
                 )
             }
         ),
@@ -820,7 +794,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Demon Slayer: Kimetsu no Yaiba Hashira Training Arc",
             posterUrl = "https://m.media-amazon.com/images/M/MV5BMWUzM2RkOTgtYTA0Yy00ZjkyLWIyOWUtMmRmM2I0NWY0NmI3XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg",
             backdropUrl = "https://m.media-amazon.com/images/M/MV5BMWUzM2RkOTgtYTA0Yy00ZjkyLWIyOWUtMmRmM2I0NWY0NmI3XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg",
-            streamUrl = STREAM_SINTEL,
+            streamUrl = null,
             embedUrl = "https://hianime.to/watch/demon-slayer-kimetsu-no-yaiba-hashira-training-arc-19108?ep=1",
             synopsis = "Tanjiro goes to see the Stone Hashira, Himejima, who intends to prepare him for the upcoming battles in the Hashira Training.",
             category = "Anime",
@@ -840,7 +814,7 @@ class MediaScraperDataSource @Inject constructor(
                     stillUrl = "https://m.media-amazon.com/images/M/MV5BMWUzM2RkOTgtYTA0Yy00ZjkyLWIyOWUtMmRmM2I0NWY0NmI3XkEyXkFqcGc@._V1_FMjpg_UX1000_.jpg",
                     duration = "25m",
                     embedUrl = "https://hianime.to/watch/demon-slayer-kimetsu-no-yaiba-hashira-training-arc-19108?ep=$epNum",
-                    streamUrl = STREAM_SINTEL
+                    streamUrl = null
                 )
             }
         ),
@@ -850,7 +824,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Squid Game",
             posterUrl = "https://image.tmdb.org/t/p/w500/dG4224823d.jpg",
             backdropUrl = "https://image.tmdb.org/t/p/w1280/dG4224823d_bg.jpg",
-            streamUrl = STREAM_BIG_BUCK_BUNNY,
+            streamUrl = null,
             embedUrl = "https://flexeo.tv/embed/tv/93405/2/1",
             synopsis = "Gi-hun returns to the deadly game with a new mission: stop the organizers once and for all.",
             category = "TV Show",
@@ -870,7 +844,7 @@ class MediaScraperDataSource @Inject constructor(
                     stillUrl = "https://image.tmdb.org/t/p/w500/dG4224823d.jpg",
                     duration = "55m",
                     embedUrl = "https://flexeo.tv/embed/tv/93405/2/$epNum",
-                    streamUrl = STREAM_BIG_BUCK_BUNNY
+                    streamUrl = null
                 )
             }
         ),
@@ -879,7 +853,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Jujutsu Kaisen Season 2 (Shibuya Incident)",
             posterUrl = "https://m.media-amazon.com/images/M/MV5BMTMwMDM4N2EtOTJiYi00OTlhLTgxM2ItNTExM2U2M2E1MDFmXkEyXkFqcGc@._V1_.jpg",
             backdropUrl = "https://m.media-amazon.com/images/M/MV5BMTMwMDM4N2EtOTJiYi00OTlhLTgxM2ItNTExM2U2M2E1MDFmXkEyXkFqcGc@._V1_.jpg",
-            streamUrl = STREAM_BIG_BUCK_BUNNY,
+            streamUrl = null,
             embedUrl = "https://hianime.to/watch/jujutsu-kaisen-2nd-season-18374?ep=1",
             synopsis = "October 31st. A curtain is lowered over Shibuya station, trapping thousands of civilians. Satoru Gojo enters the fray.",
             category = "Anime",
@@ -899,7 +873,7 @@ class MediaScraperDataSource @Inject constructor(
                     stillUrl = "https://m.media-amazon.com/images/M/MV5BMTMwMDM4N2EtOTJiYi00OTlhLTgxM2ItNTExM2U2M2E1MDFmXkEyXkFqcGc@._V1_.jpg",
                     duration = "24m",
                     embedUrl = "https://hianime.to/watch/jujutsu-kaisen-2nd-season-18374?ep=$epNum",
-                    streamUrl = STREAM_BIG_BUCK_BUNNY
+                    streamUrl = null
                 )
             }
         ),
@@ -909,7 +883,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Dune: Part Two",
             posterUrl = "https://image.tmdb.org/t/p/w500/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg",
             backdropUrl = "https://image.tmdb.org/t/p/w1280/xOMo8WhK21rmA2O3L8492.jpg",
-            streamUrl = STREAM_SINTEL,
+            streamUrl = null,
             embedUrl = "https://flexeo.tv/embed/movie/693134",
             synopsis = "Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.",
             category = "Movie",
@@ -925,7 +899,7 @@ class MediaScraperDataSource @Inject constructor(
             title = "Attack on Titan: The Final Season",
             posterUrl = "https://m.media-amazon.com/images/M/MV5BMTMyMmU5YzgtMzBiOC00NWExLTg5N2ItZDBhZDkzS2M2OWNiXkEyXkFqcGc@._V1_.jpg",
             backdropUrl = "https://m.media-amazon.com/images/M/MV5BMTMyMmU5YzgtMzBiOC00NWExLTg5N2ItZDBhZDkzS2M2OWNiXkEyXkFqcGc@._V1_.jpg",
-            streamUrl = STREAM_ELEPHANTS_DREAM,
+            streamUrl = null,
             embedUrl = "https://hianime.to/watch/attack-on-titan-the-final-season-112?ep=1",
             synopsis = "The truth beyond the walls is revealed. Eren Jaeger initiates the Rumbling to eradicate all life outside Paradis Island.",
             category = "Anime",
@@ -945,7 +919,7 @@ class MediaScraperDataSource @Inject constructor(
                     stillUrl = "https://m.media-amazon.com/images/M/MV5BMTMyMmU5YzgtMzBiOC00NWExLTg5N2ItZDBhZDkzS2M2OWNiXkEyXkFqcGc@._V1_.jpg",
                     duration = "25m",
                     embedUrl = "https://hianime.to/watch/attack-on-titan-the-final-season-112?ep=$epNum",
-                    streamUrl = STREAM_ELEPHANTS_DREAM
+                    streamUrl = null
                 )
             }
         )

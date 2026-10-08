@@ -13,6 +13,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -110,6 +111,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
+import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -118,8 +120,6 @@ private const val SEEK_STEP_MS = 10_000L
 private const val NEXT_EPISODE_THRESHOLD_MS = 20_000L
 private const val NEXT_EPISODE_COUNTDOWN_MS = 10_000L
 private const val MAX_AUTO_RETRIES = 3
-private const val FALLBACK_STREAM =
-    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
 
 /** One entry of the in-player episode picker. */
 data class PlayerEpisode(val number: Int, val title: String)
@@ -192,8 +192,7 @@ fun VideoPlayerScreen(
                         streamUrl.endsWith(".m3u8", ignoreCase = true) ||
                         streamUrl.contains(".mp4?", ignoreCase = true) ||
                         streamUrl.contains(".m3u8?", ignoreCase = true) ||
-                        streamUrl.contains("googlevideo", ignoreCase = true) ||
-                        streamUrl.contains("mux.dev", ignoreCase = true)
+                        streamUrl.contains("googlevideo", ignoreCase = true)
 
     var useWebPlayer by remember(streamUrl, embedUrl) {
         mutableStateOf(!isDirectVideo && !effectiveEmbedUrl.isNullOrBlank())
@@ -246,7 +245,7 @@ fun VideoPlayerScreen(
     }
 
     val resolvedNativeStream = remember(streamUrl) {
-        if (streamUrl.isNotBlank()) streamUrl else FALLBACK_STREAM
+        streamUrl
     }
 
     val resolvedEmbedStream = remember(embedUrl, streamUrl, effectiveEmbedUrl) {
@@ -328,14 +327,7 @@ fun VideoPlayerScreen(
 
                     override fun onPlayerError(error: PlaybackException) {
                         errorDetail = describeError(error)
-                        if (resolvedNativeStream != FALLBACK_STREAM) {
-                            // On CDN error, switch seamlessly to guaranteed direct stream
-                            isBuffering = true
-                            hasPlaybackError = false
-                            setMediaItem(MediaItem.fromUri(FALLBACK_STREAM))
-                            prepare()
-                            play()
-                        } else if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
+                        if (isTransient(error) && autoRetries < MAX_AUTO_RETRIES) {
                             // Flaky CDNs: quietly retry from where we were before bothering the viewer.
                             autoRetries++
                             isBuffering = true
@@ -1230,18 +1222,25 @@ private fun WebEmbedPlayer(
 
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        val targetHost = request.url.host
-                        if (isAllowedEmbedDomain(targetHost) || request.url.scheme in listOf("http", "https")) {
-                            return false // Allow player frame loading
-                        }
-                        return true // Block ad popups
+                        val target = request.url
+                        if (target.scheme != "http" && target.scheme != "https") return true // intent:/market: ad launches
+                        if (!request.isForMainFrame) return isAdHost(target.host) // player iframes may load freely
+                        // Top-level navigation must stay on the embed's own site; anything else is an ad redirect.
+                        val sameSite = registrableDomain(target.host) == allowedSite || isAllowedEmbedDomain(target.host)
+                        return !sameSite || isAdHost(target.host)
                     }
+
+                    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                        if (isAdHost(request.url.host)) {
+                            WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                        } else null
 
                     override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
                         onLoadStarted()
                     }
 
                     override fun onPageFinished(view: WebView?, pageUrl: String?) {
+                        view?.evaluateJavascript(AD_CLEANUP_JS, null)
                         onLoadFinished()
                     }
 
@@ -1287,6 +1286,49 @@ private fun WebEmbedPlayer(
         modifier = Modifier.fillMaxSize()
     )
 }
+
+/** Hosts of common ad/popup networks used by embed sites; their requests are answered empty. */
+private val AD_HOST_FRAGMENTS = listOf(
+    "doubleclick", "googlesyndication", "googleadservices", "adservice.google", "popads", "popcash",
+    "propellerads", "propeller-tracking", "adsterra", "exoclick", "exosrv", "juicyads", "trafficjunky",
+    "clickadu", "hilltopads", "richpush", "pushance", "onclickads", "onclkds", "ad-maven", "admaven",
+    "adcash", "adnxs", "adsco.re", "a-ads", "bidgear", "histats", "yllix", "monetag", "profitableratecpm",
+    "highperformanceformat", "effectivegatecpm", "displayvertising", "realsrv", "tsyndicate", "mc.yandex",
+    "outbrain", "taboola", "revcontent", "mgid", "zedo", "adskeeper", "bet365", "1xbet"
+)
+
+private fun isAdHost(host: String?): Boolean {
+    val h = host?.lowercase() ?: return false
+    return AD_HOST_FRAGMENTS.any { h.contains(it) }
+}
+
+/**
+ * Runs after each page load: stops scripts opening windows and removes the invisible
+ * full-screen click-catcher overlays embed sites place over the player.
+ */
+private const val AD_CLEANUP_JS = """
+(function () {
+  try {
+    window.open = function () { return null; };
+    var sweep = function () {
+      var w = window.innerWidth, h = window.innerHeight;
+      document.querySelectorAll('body *').forEach(function (el) {
+        var tag = el.tagName;
+        if (tag === 'IFRAME' || tag === 'VIDEO' || tag === 'SCRIPT' || tag === 'STYLE') return;
+        if (el.querySelector('video, iframe')) return;
+        var cs = getComputedStyle(el);
+        if (cs.position !== 'fixed' && cs.position !== 'absolute') return;
+        var r = el.getBoundingClientRect();
+        var covers = r.width >= w * 0.6 && r.height >= h * 0.6;
+        var z = parseInt(cs.zIndex, 10) || 0;
+        if (covers && z >= 100 && !el.querySelector('button, input')) el.remove();
+      });
+    };
+    sweep();
+    var n = 0, t = setInterval(function () { sweep(); if (++n > 10) clearInterval(t); }, 1000);
+  } catch (e) {}
+})();
+"""
 
 private fun registrableDomain(host: String?): String {
     val parts = host.orEmpty().lowercase().split('.')
