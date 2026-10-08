@@ -119,7 +119,7 @@ private const val NEXT_EPISODE_THRESHOLD_MS = 20_000L
 private const val NEXT_EPISODE_COUNTDOWN_MS = 10_000L
 private const val MAX_AUTO_RETRIES = 3
 private const val FALLBACK_STREAM =
-    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
 
 /** One entry of the in-player episode picker. */
 data class PlayerEpisode(val number: Int, val title: String)
@@ -194,10 +194,19 @@ fun VideoPlayerScreen(
                         streamUrl.contains("mux.dev", ignoreCase = true)
 
     val isEmbedLink = !isDirectVideo && (streamUrl.contains("/embed/") || streamUrl.contains("vidsrc"))
-    var useWebPlayer by remember { mutableStateOf(isEmbedLink && streamUrl.isNotBlank()) }
+    // Always default to native ExoPlayer for instant, smooth video playback
+    var useWebPlayer by remember { mutableStateOf(false) }
 
     var isPlaying by remember { mutableStateOf(true) }
     var isBuffering by remember { mutableStateOf(true) }
+
+    // Auto-dismiss loading overlay after 2.5s so video and controls are never blocked
+    LaunchedEffect(isBuffering) {
+        if (isBuffering) {
+            delay(2500)
+            isBuffering = false
+        }
+    }
     var hasPlaybackError by remember { mutableStateOf(false) }
     var webLoadFailed by remember { mutableStateOf(false) }
     var webReloadKey by remember { mutableIntStateOf(0) }
@@ -249,17 +258,17 @@ fun VideoPlayerScreen(
     if (manageWindow) LandscapeImmersiveEffect()
 
     val exoPlayer = remember(resolvedNativeStream) {
-        val headers = mutableMapOf<String, String>()
-        val referer = currentExtras?.referer?.takeIf { it.isNotBlank() } ?: "https://flexeo.tv/"
-        headers["Referer"] = referer
-        headers["Origin"] = referer.trimEnd('/')
-
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(15000)
             .setAllowCrossProtocolRedirects(true)
-            .setDefaultRequestProperties(headers)
+            .apply {
+                val ref = currentExtras?.referer?.takeIf { it.isNotBlank() }
+                if (ref != null) {
+                    setDefaultRequestProperties(mapOf("Referer" to ref, "Origin" to ref.trimEnd('/')))
+                }
+            }
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(
@@ -270,8 +279,7 @@ fun VideoPlayerScreen(
             .build().apply {
                 setMediaItem(buildMediaItem(resolvedNativeStream, currentExtras))
                 prepare()
-                // Never start audio behind the web player.
-                playWhenReady = !useWebPlayer
+                playWhenReady = true
                 // Dub servers list the subbed release's captions, timed to the Japanese dialogue:
                 // start with subtitles off (still selectable from Audio & Subtitles).
                 if (currentExtras?.audioMode == "dub") {
@@ -293,6 +301,10 @@ fun VideoPlayerScreen(
 
                     override fun onIsPlayingChanged(playing: Boolean) {
                         isPlaying = playing
+                        if (playing) {
+                            isBuffering = false
+                            hasPlaybackError = false
+                        }
                     }
 
                     override fun onTracksChanged(newTracks: Tracks) {
@@ -302,7 +314,7 @@ fun VideoPlayerScreen(
                     override fun onPlayerError(error: PlaybackException) {
                         errorDetail = describeError(error)
                         if (resolvedNativeStream != FALLBACK_STREAM) {
-                            // On 403 or CDN error, switch seamlessly to guaranteed direct stream
+                            // On CDN error, switch seamlessly to guaranteed direct stream
                             isBuffering = true
                             hasPlaybackError = false
                             setMediaItem(MediaItem.fromUri(FALLBACK_STREAM))
@@ -985,11 +997,13 @@ private fun HudIconButton(
 @OptIn(UnstableApi::class)
 private fun buildMediaItem(url: String, extras: PlayerExtras?): MediaItem {
     val builder = MediaItem.Builder().setUri(url)
-    if (extras != null) {
-        // Proxied/redirected anime URLs often lack a literal .m3u8 extension.
-        if (!url.substringBefore('?').endsWith(".mp4", ignoreCase = true)) {
-            builder.setMimeType(MimeTypes.APPLICATION_M3U8)
-        }
+    val lowerUrl = url.lowercase()
+    if (lowerUrl.contains(".m3u8")) {
+        builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+    } else if (lowerUrl.contains(".mp4")) {
+        builder.setMimeType(MimeTypes.VIDEO_MP4)
+    }
+    if (extras != null && extras.subtitles.isNotEmpty()) {
         val configs = ArrayList<MediaItem.SubtitleConfiguration>()
         val labels = HashSet<String>()
         extras.subtitles.forEachIndexed { i, track ->

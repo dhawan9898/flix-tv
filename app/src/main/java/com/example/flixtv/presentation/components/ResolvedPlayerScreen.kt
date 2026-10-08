@@ -54,7 +54,7 @@ fun ResolvedPlayerScreen(
         } catch (e: Exception) {
             Result.success(
                 StreamSource(
-                    streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                    streamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
                     referer = "https://flexeo.tv/"
                 )
             )
@@ -63,7 +63,7 @@ fun ResolvedPlayerScreen(
             onSuccess = { source = it },
             onFailure = {
                 source = StreamSource(
-                    streamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                    streamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
                     referer = "https://flexeo.tv/"
                 )
             }

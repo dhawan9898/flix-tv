@@ -57,7 +57,7 @@ fun MediaDetailScreen(
     val episodes = if (isAnime && !animeEpisodes.isNullOrEmpty()) animeEpisodes.orEmpty() else mediaItem.episodes
     val episodesLoading = isAnime && animeEpisodes == null
     val firstEp = episodes.firstOrNull()
-    val defaultStream = firstEp?.streamUrl ?: mediaItem.streamUrl ?: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+    val defaultStream = firstEp?.streamUrl ?: mediaItem.streamUrl ?: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
     val defaultEmbed = firstEp?.embedUrl ?: mediaItem.embedUrl
 
     Box(

@@ -212,7 +212,7 @@ class FlexeoProvider @Inject constructor(
                 direct?.streamUrl?.startsWith("http") == true &&
                 (direct.streamUrl.contains(".m3u8") || direct.streamUrl.contains(".mp4")) -> direct.streamUrl
                 !item.streamUrl.isNullOrBlank() -> item.streamUrl
-                else -> "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                else -> "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
             }
 
             StreamSource(

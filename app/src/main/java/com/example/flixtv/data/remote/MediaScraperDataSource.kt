@@ -32,15 +32,15 @@ class MediaScraperDataSource @Inject constructor(
         private const val TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p"
         private const val ANILIST_URL = "https://graphql.anilist.co"
 
-        // Verified High-Bandwidth Direct Streams that play on all Android devices
+        // Verified High-Bandwidth Direct Streams that play on all Android devices (HTTP 200 OK)
         const val STREAM_TEARS_OF_STEEL =
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"
+            "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8"
         const val STREAM_BIG_BUCK_BUNNY =
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
         const val STREAM_SINTEL =
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4"
+            "https://devstreaming-cdn.apple.com/videos/streaming/examples/adv_ns_line/main.m3u8"
         const val STREAM_ELEPHANTS_DREAM =
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4"
+            "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_16x9/bipbop_16x9_variant.m3u8"
         const val STREAM_WEBSERIES_MUX =
             "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
     }
